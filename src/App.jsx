@@ -3,8 +3,15 @@ import { database } from './firebase';
 import { ref, onValue, set } from 'firebase/database';
 
 export default function FamilyHQ() {
+  // Get current day index (Monday = 0, Sunday = 6) using local timezone
+  const getTodayIndex = () => {
+    const today = new Date();
+    const day = today.getDay(); // 0 = Sunday, 1 = Monday, etc.
+    return day === 0 ? 6 : day - 1; // Convert to Monday = 0
+  };
+
   const [currentView, setCurrentView] = useState('dashboard');
-  const [selectedDay, setSelectedDay] = useState(() => { const d = new Date().getDay(); return d === 0 ? 6 : d - 1; });
+  const [selectedDay, setSelectedDay] = useState(getTodayIndex());
   const [showAddModal, setShowAddModal] = useState(false);
   const [modalType, setModalType] = useState('event');
   const [calendarView, setCalendarView] = useState('month');
@@ -12,6 +19,8 @@ export default function FamilyHQ() {
   const [selectedCalendarDate, setSelectedCalendarDate] = useState(null);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [isLoading, setIsLoading] = useState(true);
+  const [weather, setWeather] = useState(null);
+  const [weatherLoading, setWeatherLoading] = useState(true);
   
   const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
   const shortDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -35,10 +44,93 @@ export default function FamilyHQ() {
     { id: 'monthly', label: 'Monthly' },
   ];
 
-  const getWeekStart = () => { const now = new Date(); const day = now.getDay(); const diff = now.getDate() - day + (day === 0 ? -6 : 1); return new Date(now.setDate(diff)); };
+  // Get the Monday of the current week in local timezone
+  const getWeekStart = () => {
+    const now = new Date();
+    const day = now.getDay();
+    const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+    const monday = new Date(now.getFullYear(), now.getMonth(), diff);
+    return monday;
+  };
+  
   const weekStartDate = getWeekStart();
-  const getDateForDay = (dayIndex) => { const d = new Date(weekStartDate); d.setDate(d.getDate() + dayIndex); return d; };
+  
+  // Get date for a specific day index (0 = Monday)
+  const getDateForDay = (dayIndex) => {
+    const d = new Date(weekStartDate);
+    d.setDate(d.getDate() + dayIndex);
+    return d;
+  };
+
+  // Format date as YYYY-MM-DD in local timezone
+  const formatDateLocal = (date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  // Get today's date formatted
+  const getTodayFormatted = () => {
+    const today = new Date();
+    return today.toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  };
+
+  // Get the date for selected day
+  const getSelectedDayDate = () => {
+    const date = getDateForDay(selectedDay);
+    return date.toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' });
+  };
+
   const formatWeekLabel = () => `Week of ${weekStartDate.toLocaleDateString('en-AU', { month: 'short', day: 'numeric' })}`;
+
+  // Fetch weather for Sydney/Cronulla area
+  useEffect(() => {
+    const fetchWeather = async () => {
+      try {
+        // Using Open-Meteo API (free, no API key required)
+        // Coordinates for Cronulla, Sydney
+        const lat = -34.0587;
+        const lon = 151.1515;
+        const response = await fetch(
+          `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min,weather_code&timezone=Australia%2FSydney&forecast_days=3`
+        );
+        const data = await response.json();
+        setWeather(data);
+        setWeatherLoading(false);
+      } catch (error) {
+        console.error('Weather fetch error:', error);
+        setWeatherLoading(false);
+      }
+    };
+    fetchWeather();
+    // Refresh weather every 30 minutes
+    const interval = setInterval(fetchWeather, 30 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Convert weather code to emoji and description
+  const getWeatherInfo = (code) => {
+    const weatherCodes = {
+      0: { icon: '☀️', desc: 'Clear' },
+      1: { icon: '🌤️', desc: 'Mostly Clear' },
+      2: { icon: '⛅', desc: 'Partly Cloudy' },
+      3: { icon: '☁️', desc: 'Cloudy' },
+      45: { icon: '🌫️', desc: 'Foggy' },
+      48: { icon: '🌫️', desc: 'Foggy' },
+      51: { icon: '🌦️', desc: 'Light Drizzle' },
+      53: { icon: '🌦️', desc: 'Drizzle' },
+      55: { icon: '🌧️', desc: 'Heavy Drizzle' },
+      61: { icon: '🌧️', desc: 'Light Rain' },
+      63: { icon: '🌧️', desc: 'Rain' },
+      65: { icon: '🌧️', desc: 'Heavy Rain' },
+      80: { icon: '🌦️', desc: 'Showers' },
+      81: { icon: '🌧️', desc: 'Showers' },
+      82: { icon: '⛈️', desc: 'Heavy Showers' },
+      95: { icon: '⛈️', desc: 'Thunderstorm' },
+    };
+    return weatherCodes[code] || { icon: '🌡️', desc: 'Unknown' };
+  };
 
   const defaultData = {
     calendarEvents: [],
@@ -53,7 +145,7 @@ export default function FamilyHQ() {
   };
 
   const [weekData, setWeekData] = useState(defaultData);
-  const [newItem, setNewItem] = useState({ title: '', time: '09:00', person: 'Chris', personOther: '', kid: 'Camilla', day: 0, meal: '', prep: 'Chris', task: '', item: '', date: new Date().toISOString().split('T')[0], category: 'kids', recurrence: 'none' });
+  const [newItem, setNewItem] = useState({ title: '', time: '09:00', person: 'Chris', personOther: '', kid: 'Camilla', day: 0, meal: '', prep: 'Chris', task: '', item: '', date: formatDateLocal(new Date()), category: 'kids', recurrence: 'none' });
 
   // Firebase sync
   useEffect(() => {
@@ -72,19 +164,30 @@ export default function FamilyHQ() {
 
   const saveToFirebase = (newData) => set(ref(database, 'familyData'), newData).catch(console.error);
 
-  const eventOccursOnDate = (event, targetDate) => {
-    const eventDate = new Date(event.date); const target = new Date(targetDate);
-    if (target < eventDate) return false;
-    const daysDiff = Math.floor((target - eventDate) / (1000 * 60 * 60 * 24));
+  // Check if event occurs on a specific date (handles recurrence)
+  const eventOccursOnDate = (event, targetDateStr) => {
+    const eventDate = new Date(event.date + 'T00:00:00');
+    const targetDate = new Date(targetDateStr + 'T00:00:00');
+    
+    if (targetDate < eventDate) return false;
+    
+    const daysDiff = Math.floor((targetDate - eventDate) / (1000 * 60 * 60 * 24));
+    
     if (event.recurrence === 'none') return daysDiff === 0;
     if (event.recurrence === 'weekly') return daysDiff % 7 === 0;
     if (event.recurrence === 'fortnightly') return daysDiff % 14 === 0;
-    if (event.recurrence === 'monthly') return eventDate.getDate() === target.getDate();
+    if (event.recurrence === 'monthly') return eventDate.getDate() === targetDate.getDate();
     return daysDiff === 0;
   };
 
   const getEventsForDate = (dateStr) => (weekData.calendarEvents || []).filter(e => eventOccursOnDate(e, dateStr)).sort((a, b) => (a.time || '').localeCompare(b.time || ''));
-  const getEventsForDay = (dayIndex) => getEventsForDate(getDateForDay(dayIndex).toISOString().split('T')[0]);
+  
+  const getEventsForDay = (dayIndex) => {
+    const date = getDateForDay(dayIndex);
+    const dateStr = formatDateLocal(date);
+    return getEventsForDate(dateStr);
+  };
+
   const formatTime = (t) => { if (!t) return ''; const [h, m] = t.split(':'); const hr = parseInt(h); return `${hr % 12 || 12}:${m} ${hr >= 12 ? 'PM' : 'AM'}`; };
   const getCategoryInfo = (id) => eventCategories.find(c => c.id === id) || eventCategories[4];
 
@@ -96,7 +199,12 @@ export default function FamilyHQ() {
   const deleteChore = (id) => { const newData = { ...weekData, chores: weekData.chores.filter(c => c.id !== id) }; setWeekData(newData); saveToFirebase(newData); };
   const deleteGroceryItem = (id) => { const newData = { ...weekData, grocery: weekData.grocery.filter(g => g.id !== id) }; setWeekData(newData); saveToFirebase(newData); };
 
-  const openModal = (type, presetDate = null) => { setModalType(type); setNewItem(p => ({ ...p, day: selectedDay, date: presetDate || getDateForDay(selectedDay).toISOString().split('T')[0], person: 'Chris', personOther: '' })); setShowAddModal(true); };
+  const openModal = (type, presetDate = null) => { 
+    setModalType(type); 
+    const dateStr = presetDate || formatDateLocal(getDateForDay(selectedDay));
+    setNewItem(p => ({ ...p, day: selectedDay, date: dateStr, person: 'Chris', personOther: '' })); 
+    setShowAddModal(true); 
+  };
 
   const addItem = () => {
     const id = Date.now();
@@ -107,7 +215,7 @@ export default function FamilyHQ() {
     else if (modalType === 'chore' && newItem.task) newData.chores = [...(weekData.chores || []), { id, day: newItem.day, task: newItem.task, person: finalPerson, done: false }];
     else if (modalType === 'grocery' && newItem.item) newData.grocery = [...(weekData.grocery || []), { id, item: newItem.item, done: false }];
     setWeekData(newData); saveToFirebase(newData);
-    setNewItem({ title: '', time: '09:00', person: 'Chris', personOther: '', kid: 'Camilla', day: selectedDay, meal: '', prep: 'Chris', task: '', item: '', date: new Date().toISOString().split('T')[0], category: 'kids', recurrence: 'none' });
+    setNewItem({ title: '', time: '09:00', person: 'Chris', personOther: '', kid: 'Camilla', day: selectedDay, meal: '', prep: 'Chris', task: '', item: '', date: formatDateLocal(new Date()), category: 'kids', recurrence: 'none' });
     setShowAddModal(false); setSelectedCalendarDate(null);
   };
 
@@ -119,6 +227,46 @@ export default function FamilyHQ() {
   const KidBadge = ({ kid }) => <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${kid === 'Camilla' ? 'bg-pink-100 text-pink-700' : kid === 'Asher' ? 'bg-emerald-100 text-emerald-700' : kid === 'Both' ? 'bg-amber-100 text-amber-700' : 'bg-stone-100 text-stone-600'}`}>{kid}</span>;
   const NavButton = ({ view, icon, label }) => <button onClick={() => setCurrentView(view)} className={`flex flex-col items-center p-2 rounded-xl ${currentView === view ? 'bg-amber-100 text-amber-700' : 'text-stone-500'}`} style={{ minWidth: 56 }}><span className="text-lg">{icon}</span><span className="text-xs font-medium">{label}</span></button>;
 
+  const WeatherWidget = () => {
+    if (weatherLoading) return <div className="bg-gradient-to-br from-blue-50 to-sky-50 rounded-2xl p-4 border border-blue-100 animate-pulse"><div className="h-16"></div></div>;
+    if (!weather) return null;
+    
+    const current = weather.current;
+    const daily = weather.daily;
+    const weatherInfo = getWeatherInfo(current.weather_code);
+    
+    return (
+      <div className="bg-gradient-to-br from-blue-50 to-sky-50 rounded-2xl p-4 border border-blue-100">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-xs text-stone-500 mb-1">Cronulla</p>
+            <div className="flex items-center gap-2">
+              <span className="text-3xl">{weatherInfo.icon}</span>
+              <div>
+                <p className="text-2xl font-bold text-stone-800">{Math.round(current.temperature_2m)}°</p>
+                <p className="text-xs text-stone-500">Feels {Math.round(current.apparent_temperature)}°</p>
+              </div>
+            </div>
+            <p className="text-sm text-stone-600 mt-1">{weatherInfo.desc}</p>
+          </div>
+          <div className="text-right">
+            <p className="text-xs text-stone-500">Today</p>
+            <p className="text-sm text-stone-700">{Math.round(daily.temperature_2m_max[0])}° / {Math.round(daily.temperature_2m_min[0])}°</p>
+            <div className="flex gap-2 mt-2">
+              {[1, 2].map(i => (
+                <div key={i} className="text-center">
+                  <p className="text-xs text-stone-400">{new Date(daily.time[i]).toLocaleDateString('en-AU', { weekday: 'short' })}</p>
+                  <span className="text-sm">{getWeatherInfo(daily.weather_code[i]).icon}</span>
+                  <p className="text-xs text-stone-600">{Math.round(daily.temperature_2m_max[i])}°</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const EventCard = ({ event, showDate }) => {
     const cat = getCategoryInfo(event.category);
     return (
@@ -126,7 +274,7 @@ export default function FamilyHQ() {
         <div className="w-1 h-10 rounded-full" style={{ backgroundColor: cat.color }} />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1"><span>{cat.icon}</span><p className="font-semibold text-stone-800 text-sm truncate">{event.title}</p>{event.recurrence !== 'none' && <span className="text-xs text-stone-400">🔄</span>}</div>
-          <div className="flex items-center gap-2 flex-wrap"><span className="text-xs text-stone-500">{formatTime(event.time)}</span>{showDate && <span className="text-xs text-stone-400">{new Date(event.date).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })}</span>}<PersonBadge person={event.person} />{event.kid !== 'None' && <KidBadge kid={event.kid} />}</div>
+          <div className="flex items-center gap-2 flex-wrap"><span className="text-xs text-stone-500">{formatTime(event.time)}</span>{showDate && <span className="text-xs text-stone-400">{new Date(event.date + 'T00:00:00').toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })}</span>}<PersonBadge person={event.person} />{event.kid !== 'None' && <KidBadge kid={event.kid} />}</div>
         </div>
         <button onClick={() => deleteEvent(event.id)} className="opacity-0 group-hover:opacity-100 w-5 h-5 rounded-full bg-red-100 text-red-500 text-xs">✕</button>
       </div>
@@ -155,11 +303,28 @@ export default function FamilyHQ() {
   if (isLoading) return <div className="min-h-screen bg-gradient-to-br from-stone-50 via-amber-50/30 to-stone-50 flex items-center justify-center"><div className="text-center"><div className="text-4xl mb-4 animate-bounce">🏠</div><p className="text-stone-500 font-medium">Loading Family HQ...</p></div></div>;
 
   const CalendarView = () => {
-    const daysInMonth = getDaysInMonth(currentMonth); const firstDay = getFirstDayOfMonth(currentMonth);
+    const daysInMonth = getDaysInMonth(currentMonth); 
+    const firstDay = getFirstDayOfMonth(currentMonth);
     const calendarDays = [...Array(firstDay).fill(null), ...Array(daysInMonth).fill(null).map((_, i) => i + 1)];
-    const getDateString = (day) => day ? new Date(currentMonth.getFullYear(), currentMonth.getMonth(), day).toISOString().split('T')[0] : null;
-    const today = new Date(); const isToday = (day) => day && day === today.getDate() && currentMonth.getMonth() === today.getMonth() && currentMonth.getFullYear() === today.getFullYear();
-    const getUpcomingEvents = () => { const events = []; for (let i = 0; i < 30; i++) { const d = new Date(); d.setDate(d.getDate() + i); const ds = d.toISOString().split('T')[0]; getEventsForDate(ds).forEach(e => events.push({ ...e, displayDate: ds })); } return events; };
+    
+    const getDateString = (day) => {
+      if (!day) return null;
+      return formatDateLocal(new Date(currentMonth.getFullYear(), currentMonth.getMonth(), day));
+    };
+    
+    const today = new Date();
+    const isToday = (day) => day && day === today.getDate() && currentMonth.getMonth() === today.getMonth() && currentMonth.getFullYear() === today.getFullYear();
+    
+    const getUpcomingEvents = () => { 
+      const events = []; 
+      for (let i = 0; i < 30; i++) { 
+        const d = new Date(); 
+        d.setDate(d.getDate() + i); 
+        const ds = formatDateLocal(d); 
+        getEventsForDate(ds).forEach(e => events.push({ ...e, displayDate: ds })); 
+      } 
+      return events; 
+    };
 
     return (
       <div className="space-y-4 pb-20">
@@ -175,7 +340,8 @@ export default function FamilyHQ() {
           <div className="bg-white rounded-xl border border-stone-100 overflow-hidden">
             <div className="grid grid-cols-7 bg-stone-50 border-b border-stone-100">{['M','T','W','T','F','S','S'].map((d,i) => <div key={i} className="py-2 text-center text-xs font-semibold text-stone-500">{d}</div>)}</div>
             <div className="grid grid-cols-7">{calendarDays.map((day, i) => {
-              const dateStr = getDateString(day); const events = dateStr ? getEventsForDate(dateStr) : [];
+              const dateStr = getDateString(day); 
+              const events = dateStr ? getEventsForDate(dateStr) : [];
               return <div key={i} onClick={() => day && setSelectedCalendarDate(dateStr)} className={`min-h-[52px] p-1 border-b border-r border-stone-100 cursor-pointer ${!day ? 'bg-stone-50' : selectedCalendarDate === dateStr ? 'bg-amber-50' : 'hover:bg-stone-50'}`}>
                 {day && <><div className={`text-xs w-5 h-5 flex items-center justify-center rounded-full ${isToday(day) ? 'bg-amber-500 text-white' : ''}`}>{day}</div>
                 <div className="space-y-0.5">{events.slice(0,2).map((e,j) => <div key={j} className="text-white px-1 rounded truncate" style={{ backgroundColor: getCategoryInfo(e.category).color, fontSize: 9 }}>{e.title}</div>)}{events.length > 2 && <div className="text-stone-400" style={{ fontSize: 9 }}>+{events.length-2}</div>}</div></>}
@@ -183,7 +349,7 @@ export default function FamilyHQ() {
             })}</div>
           </div>
           {selectedCalendarDate && <div className="bg-white rounded-xl p-4 border border-stone-100">
-            <div className="flex items-center justify-between mb-3"><h4 className="font-bold text-stone-800 text-sm">{new Date(selectedCalendarDate).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' })}</h4><button onClick={() => openModal('event', selectedCalendarDate)} className="px-3 py-1 rounded-full bg-amber-500 text-white text-xs">+ Add</button></div>
+            <div className="flex items-center justify-between mb-3"><h4 className="font-bold text-stone-800 text-sm">{new Date(selectedCalendarDate + 'T00:00:00').toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' })}</h4><button onClick={() => openModal('event', selectedCalendarDate)} className="px-3 py-1 rounded-full bg-amber-500 text-white text-xs">+ Add</button></div>
             {getEventsForDate(selectedCalendarDate).length === 0 ? <p className="text-stone-400 text-sm text-center py-3">No events</p> : <div className="space-y-2">{getEventsForDate(selectedCalendarDate).map((e,i) => <EventCard key={i} event={e} />)}</div>}
           </div>}
           <div className="flex flex-wrap gap-2">{eventCategories.map(c => <div key={c.id} className="flex items-center gap-1 text-xs"><div className="w-2 h-2 rounded-full" style={{ backgroundColor: c.color }}></div>{c.label}</div>)}</div>
@@ -197,12 +363,44 @@ export default function FamilyHQ() {
 
   const DashboardView = () => {
     const tomorrowIndex = (selectedDay + 1) % 7; const lunch = getLunchForDay(tomorrowIndex);
+    const isToday = selectedDay === getTodayIndex();
+    
     return (
       <div className="space-y-4 pb-20">
         <div className="bg-gradient-to-br from-amber-50 to-orange-50 rounded-2xl p-4 border border-amber-100">
-          <div className="flex items-center justify-between mb-3"><div><h2 className="text-lg font-bold text-stone-800">{days[selectedDay]}</h2><p className="text-xs text-stone-500">{formatWeekLabel()}</p></div><span className={`flex items-center gap-1 text-xs px-2 py-1 rounded-full ${isOnline ? 'text-emerald-600 bg-emerald-50' : 'text-amber-600 bg-amber-50'}`}><span className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`}></span>{isOnline ? 'Synced' : 'Offline'}</span></div>
-          <div className="flex gap-1">{shortDays.map((d, i) => <button key={d} onClick={() => setSelectedDay(i)} className={`flex-1 py-1.5 rounded-lg text-xs font-semibold ${selectedDay === i ? 'bg-amber-500 text-white shadow-md' : 'bg-white text-stone-600'}`}>{d}</button>)}</div>
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h2 className="text-lg font-bold text-stone-800">{days[selectedDay]}</h2>
+              <p className="text-xs text-stone-500">{getSelectedDayDate()}</p>
+            </div>
+            <span className={`flex items-center gap-1 text-xs px-2 py-1 rounded-full ${isOnline ? 'text-emerald-600 bg-emerald-50' : 'text-amber-600 bg-amber-50'}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`}></span>
+              {isOnline ? 'Synced' : 'Offline'}
+            </span>
+          </div>
+          <div className="flex gap-1">
+            {shortDays.map((d, i) => (
+              <button 
+                key={d} 
+                onClick={() => setSelectedDay(i)} 
+                className={`flex-1 py-1.5 rounded-lg text-xs font-semibold ${selectedDay === i ? 'bg-amber-500 text-white shadow-md' : i === getTodayIndex() ? 'bg-amber-200 text-amber-800' : 'bg-white text-stone-600'}`}
+              >
+                {d}
+              </button>
+            ))}
+          </div>
+          {!isToday && (
+            <button 
+              onClick={() => setSelectedDay(getTodayIndex())} 
+              className="w-full mt-2 py-1.5 text-xs text-amber-600 font-medium hover:text-amber-700"
+            >
+              ← Back to Today
+            </button>
+          )}
         </div>
+
+        <WeatherWidget />
+
         <div className="bg-white rounded-2xl p-4 border border-stone-100">
           <div className="flex items-center justify-between mb-3"><h3 className="font-bold text-stone-800">📅 Schedule</h3><button onClick={() => setCurrentView('calendar')} className="text-xs text-amber-600 font-medium">View Calendar →</button></div>
           {getEventsForDay(selectedDay).length === 0 ? <p className="text-stone-400 text-sm py-3 text-center">No events</p> : <div className="space-y-2">{getEventsForDay(selectedDay).map((e,i) => <EventCard key={i} event={e} />)}</div>}
