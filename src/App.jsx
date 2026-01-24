@@ -29,6 +29,7 @@ export default function FamilyHQ() {
   const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
   const locations = ['Little Palace', 'Cronulla Pre-School', 'No Daycare'];
   const people = ['Chris', 'Alex', 'Both'];
+  const caregiverOptions = ['Chris', 'Alex', 'Both', 'Other'];
   const familyMembers = ['Camilla', 'Asher', 'Chris', 'Alex'];
   
   const eventCategories = [
@@ -143,8 +144,8 @@ export default function FamilyHQ() {
   const defaultData = {
     calendarEvents: [],
     kids: {
-      camilla: Array(7).fill(null).map((_, i) => ({ day: i, location: i < 5 ? 'Little Palace' : 'No Daycare', dropoff: 'Chris', pickup: 'Alex' })),
-      asher: Array(7).fill(null).map((_, i) => ({ day: i, location: i < 5 ? 'Little Palace' : 'No Daycare', dropoff: 'Alex', pickup: 'Chris' }))
+      camilla: Array(7).fill(null).map((_, i) => ({ day: i, location: i < 5 ? 'Little Palace' : 'No Daycare', dropoff: 'Chris', pickup: 'Alex', caregiver: 'Chris', caregiverOther: '' })),
+      asher: Array(7).fill(null).map((_, i) => ({ day: i, location: i < 5 ? 'Little Palace' : 'No Daycare', dropoff: 'Alex', pickup: 'Chris', caregiver: 'Alex', caregiverOther: '' }))
     },
     meals: [],
     lunches: Array(7).fill(null).map((_, i) => ({ day: i, camilla: '', asher: '', chris: '', alex: '' })),
@@ -160,7 +161,28 @@ export default function FamilyHQ() {
     const dataRef = ref(database, 'familyData');
     const unsubscribe = onValue(dataRef, (snapshot) => {
       const data = snapshot.val();
-      if (data) setWeekData({ ...defaultData, ...data, kids: { camilla: data.kids?.camilla || defaultData.kids.camilla, asher: data.kids?.asher || defaultData.kids.asher }, lunches: data.lunches || defaultData.lunches });
+      if (data) {
+        // Ensure caregiver fields exist for backward compatibility
+        const processKidData = (kidData, defaults) => {
+          if (!kidData) return defaults;
+          return kidData.map((d, i) => ({
+            ...defaults[i],
+            ...d,
+            caregiver: d.caregiver || 'Chris',
+            caregiverOther: d.caregiverOther || ''
+          }));
+        };
+        
+        setWeekData({ 
+          ...defaultData, 
+          ...data, 
+          kids: { 
+            camilla: processKidData(data.kids?.camilla, defaultData.kids.camilla),
+            asher: processKidData(data.kids?.asher, defaultData.kids.asher)
+          }, 
+          lunches: data.lunches || defaultData.lunches 
+        });
+      }
       setIsLoading(false);
     }, () => setIsLoading(false));
     const handleOnline = () => setIsOnline(true);
@@ -208,7 +230,18 @@ export default function FamilyHQ() {
   const formatTime = (t) => { if (!t) return ''; const [h, m] = t.split(':'); const hr = parseInt(h); return `${hr % 12 || 12}:${m} ${hr >= 12 ? 'PM' : 'AM'}`; };
   const getCategoryInfo = (id) => eventCategories.find(c => c.id === id) || eventCategories[4];
 
-  const updateKidDay = (kid, day, field, value) => { const newData = { ...weekData, kids: { ...weekData.kids, [kid]: weekData.kids[kid].map((d, i) => i === day ? { ...d, [field]: value } : d) } }; setWeekData(newData); saveToFirebase(newData); };
+  const updateKidDay = (kid, day, field, value) => { 
+    const newData = { 
+      ...weekData, 
+      kids: { 
+        ...weekData.kids, 
+        [kid]: weekData.kids[kid].map((d, i) => i === day ? { ...d, [field]: value } : d) 
+      } 
+    }; 
+    setWeekData(newData); 
+    saveToFirebase(newData); 
+  };
+  
   const updateLunch = (day, person, value) => { const newData = { ...weekData, lunches: weekData.lunches.map((l, i) => i === day ? { ...l, [person.toLowerCase()]: value } : l) }; setWeekData(newData); saveToFirebase(newData); };
   const toggleChore = (id) => { const newData = { ...weekData, chores: weekData.chores.map(c => c.id === id ? { ...c, done: !c.done } : c) }; setWeekData(newData); saveToFirebase(newData); };
   const toggleGrocery = (id) => { const newData = { ...weekData, grocery: weekData.grocery.map(g => g.id === id ? { ...g, done: !g.done } : g) }; setWeekData(newData); saveToFirebase(newData); };
@@ -367,17 +400,117 @@ export default function FamilyHQ() {
     );
   };
 
+  // Caregiver selector component
+  const CaregiverSelector = ({ value, otherValue, onChange, onOtherChange }) => {
+    const isOther = value === 'Other';
+    
+    if (isOther) {
+      return (
+        <div className="space-y-1">
+          <input 
+            type="text" 
+            placeholder="e.g., Grandma, Babysitter..." 
+            value={otherValue} 
+            onChange={(e) => onOtherChange(e.target.value)} 
+            className="w-full px-2 py-1.5 rounded-lg border border-stone-200 text-sm" 
+          />
+          <button 
+            onClick={() => onChange('Chris')} 
+            className="text-xs text-amber-600"
+          >
+            ← Back to list
+          </button>
+        </div>
+      );
+    }
+    
+    return (
+      <select 
+        value={value} 
+        onChange={(e) => onChange(e.target.value)} 
+        className="w-full px-2 py-1.5 rounded-lg border-0 bg-white text-sm font-medium"
+      >
+        {caregiverOptions.map(c => (
+          <option key={c} value={c}>{c === 'Other' ? 'Other...' : c}</option>
+        ))}
+      </select>
+    );
+  };
+
   const KidSection = ({ name, data }) => {
-    const kidKey = name.toLowerCase(); const dayData = data?.[selectedDay] || { location: 'No Daycare', dropoff: '', pickup: '' }; const isNoDaycare = dayData.location === 'No Daycare';
+    const kidKey = name.toLowerCase(); 
+    const dayData = data?.[selectedDay] || { location: 'No Daycare', dropoff: '', pickup: '', caregiver: 'Chris', caregiverOther: '' }; 
+    const isNoDaycare = dayData.location === 'No Daycare';
+    
+    // Get display name for caregiver
+    const getCaregiverDisplay = () => {
+      if (dayData.caregiver === 'Other' && dayData.caregiverOther) {
+        return dayData.caregiverOther;
+      }
+      return dayData.caregiver || 'Chris';
+    };
+    
     return (
       <div className={`rounded-2xl p-4 border ${name === 'Camilla' ? 'bg-gradient-to-br from-pink-50 to-rose-50 border-pink-100' : 'bg-gradient-to-br from-emerald-50 to-teal-50 border-emerald-100'}`}>
-        <div className="flex items-center gap-2 mb-3"><div className={`w-8 h-8 rounded-full flex items-center justify-center ${name === 'Camilla' ? 'bg-pink-200' : 'bg-emerald-200'}`}>{name === 'Camilla' ? '👧' : '👦'}</div><h3 className="font-bold text-stone-800">{name}</h3></div>
+        <div className="flex items-center gap-2 mb-3">
+          <div className={`w-8 h-8 rounded-full flex items-center justify-center ${name === 'Camilla' ? 'bg-pink-200' : 'bg-emerald-200'}`}>
+            {name === 'Camilla' ? '👧' : '👦'}
+          </div>
+          <h3 className="font-bold text-stone-800">{name}</h3>
+          {isNoDaycare && (
+            <span className="text-xs bg-white/70 px-2 py-0.5 rounded-full text-stone-600">
+              with {getCaregiverDisplay()}
+            </span>
+          )}
+        </div>
         <div className="space-y-2">
-          <div className="bg-white/70 rounded-xl p-2"><label className="text-xs text-stone-500">Location</label><select value={dayData.location} onChange={(e) => updateKidDay(kidKey, selectedDay, 'location', e.target.value)} className="w-full mt-1 px-2 py-1.5 rounded-lg border-0 bg-white text-sm font-medium">{locations.map(l => <option key={l}>{l}</option>)}</select></div>
-          {!isNoDaycare && <div className="grid grid-cols-2 gap-2">
-            <div className="bg-white/70 rounded-xl p-2"><label className="text-xs text-stone-500">Drop-off</label><select value={dayData.dropoff} onChange={(e) => updateKidDay(kidKey, selectedDay, 'dropoff', e.target.value)} className="w-full mt-1 px-2 py-1.5 rounded-lg border-0 bg-white text-sm font-medium">{people.map(p => <option key={p}>{p}</option>)}</select></div>
-            <div className="bg-white/70 rounded-xl p-2"><label className="text-xs text-stone-500">Pick-up</label><select value={dayData.pickup} onChange={(e) => updateKidDay(kidKey, selectedDay, 'pickup', e.target.value)} className="w-full mt-1 px-2 py-1.5 rounded-lg border-0 bg-white text-sm font-medium">{people.map(p => <option key={p}>{p}</option>)}</select></div>
-          </div>}
+          <div className="bg-white/70 rounded-xl p-2">
+            <label className="text-xs text-stone-500">Location</label>
+            <select 
+              value={dayData.location} 
+              onChange={(e) => updateKidDay(kidKey, selectedDay, 'location', e.target.value)} 
+              className="w-full mt-1 px-2 py-1.5 rounded-lg border-0 bg-white text-sm font-medium"
+            >
+              {locations.map(l => <option key={l}>{l}</option>)}
+            </select>
+          </div>
+          
+          {isNoDaycare ? (
+            <div className="bg-white/70 rounded-xl p-2">
+              <label className="text-xs text-stone-500">Who's looking after {name}?</label>
+              <div className="mt-1">
+                <CaregiverSelector 
+                  value={dayData.caregiver || 'Chris'} 
+                  otherValue={dayData.caregiverOther || ''} 
+                  onChange={(val) => updateKidDay(kidKey, selectedDay, 'caregiver', val)}
+                  onOtherChange={(val) => updateKidDay(kidKey, selectedDay, 'caregiverOther', val)}
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              <div className="bg-white/70 rounded-xl p-2">
+                <label className="text-xs text-stone-500">Drop-off</label>
+                <select 
+                  value={dayData.dropoff} 
+                  onChange={(e) => updateKidDay(kidKey, selectedDay, 'dropoff', e.target.value)} 
+                  className="w-full mt-1 px-2 py-1.5 rounded-lg border-0 bg-white text-sm font-medium"
+                >
+                  {people.map(p => <option key={p}>{p}</option>)}
+                </select>
+              </div>
+              <div className="bg-white/70 rounded-xl p-2">
+                <label className="text-xs text-stone-500">Pick-up</label>
+                <select 
+                  value={dayData.pickup} 
+                  onChange={(e) => updateKidDay(kidKey, selectedDay, 'pickup', e.target.value)} 
+                  className="w-full mt-1 px-2 py-1.5 rounded-lg border-0 bg-white text-sm font-medium"
+                >
+                  {people.map(p => <option key={p}>{p}</option>)}
+                </select>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
