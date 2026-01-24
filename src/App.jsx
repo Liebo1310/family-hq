@@ -12,8 +12,10 @@ export default function FamilyHQ() {
 
   const [currentView, setCurrentView] = useState('dashboard');
   const [selectedDay, setSelectedDay] = useState(getTodayIndex());
+  const [selectedWeekOffset, setSelectedWeekOffset] = useState(0); // 0 = this week, 1 = next week, etc.
   const [showAddModal, setShowAddModal] = useState(false);
   const [modalType, setModalType] = useState('event');
+  const [editingEvent, setEditingEvent] = useState(null); // For editing existing events
   const [calendarView, setCalendarView] = useState('month');
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedCalendarDate, setSelectedCalendarDate] = useState(null);
@@ -44,20 +46,21 @@ export default function FamilyHQ() {
     { id: 'monthly', label: 'Monthly' },
   ];
 
-  // Get the Monday of the current week in local timezone
-  const getWeekStart = () => {
+  // Get the Monday of a specific week (0 = this week, 1 = next week, etc.)
+  const getWeekStart = (weekOffset = 0) => {
     const now = new Date();
     const day = now.getDay();
-    const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+    const diff = now.getDate() - day + (day === 0 ? -6 : 1) + (weekOffset * 7);
     const monday = new Date(now.getFullYear(), now.getMonth(), diff);
     return monday;
   };
   
-  const weekStartDate = getWeekStart();
+  const weekStartDate = getWeekStart(selectedWeekOffset);
   
-  // Get date for a specific day index (0 = Monday)
-  const getDateForDay = (dayIndex) => {
-    const d = new Date(weekStartDate);
+  // Get date for a specific day index (0 = Monday) in the selected week
+  const getDateForDay = (dayIndex, weekOffset = selectedWeekOffset) => {
+    const monday = getWeekStart(weekOffset);
+    const d = new Date(monday);
     d.setDate(d.getDate() + dayIndex);
     return d;
   };
@@ -70,26 +73,33 @@ export default function FamilyHQ() {
     return `${year}-${month}-${day}`;
   };
 
-  // Get today's date formatted
-  const getTodayFormatted = () => {
-    const today = new Date();
-    return today.toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-  };
-
   // Get the date for selected day
   const getSelectedDayDate = () => {
     const date = getDateForDay(selectedDay);
     return date.toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' });
   };
 
-  const formatWeekLabel = () => `Week of ${weekStartDate.toLocaleDateString('en-AU', { month: 'short', day: 'numeric' })}`;
+  const formatWeekLabel = () => {
+    const start = weekStartDate;
+    const end = new Date(start);
+    end.setDate(end.getDate() + 6);
+    
+    if (selectedWeekOffset === 0) {
+      return `This Week (${start.toLocaleDateString('en-AU', { month: 'short', day: 'numeric' })} - ${end.toLocaleDateString('en-AU', { month: 'short', day: 'numeric' })})`;
+    } else if (selectedWeekOffset === 1) {
+      return `Next Week (${start.toLocaleDateString('en-AU', { month: 'short', day: 'numeric' })} - ${end.toLocaleDateString('en-AU', { month: 'short', day: 'numeric' })})`;
+    } else {
+      return `${start.toLocaleDateString('en-AU', { month: 'short', day: 'numeric' })} - ${end.toLocaleDateString('en-AU', { month: 'short', day: 'numeric' })}`;
+    }
+  };
+
+  // Check if we're viewing the current week and current day
+  const isViewingToday = () => selectedWeekOffset === 0 && selectedDay === getTodayIndex();
 
   // Fetch weather for Sydney/Cronulla area
   useEffect(() => {
     const fetchWeather = async () => {
       try {
-        // Using Open-Meteo API (free, no API key required)
-        // Coordinates for Cronulla, Sydney
         const lat = -34.0587;
         const lon = 151.1515;
         const response = await fetch(
@@ -104,12 +114,10 @@ export default function FamilyHQ() {
       }
     };
     fetchWeather();
-    // Refresh weather every 30 minutes
     const interval = setInterval(fetchWeather, 30 * 60 * 1000);
     return () => clearInterval(interval);
   }, []);
 
-  // Convert weather code to emoji and description
   const getWeatherInfo = (code) => {
     const weatherCodes = {
       0: { icon: '☀️', desc: 'Clear' },
@@ -164,7 +172,6 @@ export default function FamilyHQ() {
 
   const saveToFirebase = (newData) => set(ref(database, 'familyData'), newData).catch(console.error);
 
-  // Check if event occurs on a specific date (handles recurrence)
   const eventOccursOnDate = (event, targetDateStr) => {
     const eventDate = new Date(event.date + 'T00:00:00');
     const targetDate = new Date(targetDateStr + 'T00:00:00');
@@ -200,23 +207,70 @@ export default function FamilyHQ() {
   const deleteGroceryItem = (id) => { const newData = { ...weekData, grocery: weekData.grocery.filter(g => g.id !== id) }; setWeekData(newData); saveToFirebase(newData); };
 
   const openModal = (type, presetDate = null) => { 
-    setModalType(type); 
+    setModalType(type);
+    setEditingEvent(null);
     const dateStr = presetDate || formatDateLocal(getDateForDay(selectedDay));
-    setNewItem(p => ({ ...p, day: selectedDay, date: dateStr, person: 'Chris', personOther: '' })); 
+    setNewItem({ title: '', time: '09:00', person: 'Chris', personOther: '', kid: 'Camilla', day: selectedDay, meal: '', prep: 'Chris', task: '', item: '', date: dateStr, category: 'kids', recurrence: 'none' }); 
     setShowAddModal(true); 
   };
 
+  // Open modal to edit an existing event
+  const openEditModal = (event) => {
+    setModalType('event');
+    setEditingEvent(event);
+    const isOtherPerson = !people.includes(event.person);
+    setNewItem({
+      title: event.title,
+      time: event.time,
+      person: isOtherPerson ? 'Other' : event.person,
+      personOther: isOtherPerson ? event.person : '',
+      kid: event.kid,
+      day: selectedDay,
+      meal: '',
+      prep: 'Chris',
+      task: '',
+      item: '',
+      date: event.date,
+      category: event.category,
+      recurrence: event.recurrence
+    });
+    setShowAddModal(true);
+  };
+
   const addItem = () => {
-    const id = Date.now();
     const finalPerson = newItem.person === 'Other' ? newItem.personOther : newItem.person;
     let newData = { ...weekData };
-    if (modalType === 'event' && newItem.title) newData.calendarEvents = [...(weekData.calendarEvents || []), { id, date: newItem.date, time: newItem.time, title: newItem.title, person: finalPerson, kid: newItem.kid, category: newItem.category, recurrence: newItem.recurrence }];
-    else if (modalType === 'meal' && newItem.meal) newData.meals = [...(weekData.meals || []).filter(m => m.day !== newItem.day), { id, day: newItem.day, meal: newItem.meal, prep: newItem.prep }];
-    else if (modalType === 'chore' && newItem.task) newData.chores = [...(weekData.chores || []), { id, day: newItem.day, task: newItem.task, person: finalPerson, done: false }];
-    else if (modalType === 'grocery' && newItem.item) newData.grocery = [...(weekData.grocery || []), { id, item: newItem.item, done: false }];
-    setWeekData(newData); saveToFirebase(newData);
+    
+    if (modalType === 'event' && newItem.title) {
+      if (editingEvent) {
+        // Update existing event
+        newData.calendarEvents = weekData.calendarEvents.map(e => 
+          e.id === editingEvent.id 
+            ? { ...e, date: newItem.date, time: newItem.time, title: newItem.title, person: finalPerson, kid: newItem.kid, category: newItem.category, recurrence: newItem.recurrence }
+            : e
+        );
+      } else {
+        // Add new event
+        const id = Date.now();
+        newData.calendarEvents = [...(weekData.calendarEvents || []), { id, date: newItem.date, time: newItem.time, title: newItem.title, person: finalPerson, kid: newItem.kid, category: newItem.category, recurrence: newItem.recurrence }];
+      }
+    } else if (modalType === 'meal' && newItem.meal) {
+      const id = Date.now();
+      newData.meals = [...(weekData.meals || []).filter(m => m.day !== newItem.day), { id, day: newItem.day, meal: newItem.meal, prep: newItem.prep }];
+    } else if (modalType === 'chore' && newItem.task) {
+      const id = Date.now();
+      newData.chores = [...(weekData.chores || []), { id, day: newItem.day, task: newItem.task, person: finalPerson, done: false }];
+    } else if (modalType === 'grocery' && newItem.item) {
+      const id = Date.now();
+      newData.grocery = [...(weekData.grocery || []), { id, item: newItem.item, done: false }];
+    }
+    
+    setWeekData(newData); 
+    saveToFirebase(newData);
     setNewItem({ title: '', time: '09:00', person: 'Chris', personOther: '', kid: 'Camilla', day: selectedDay, meal: '', prep: 'Chris', task: '', item: '', date: formatDateLocal(new Date()), category: 'kids', recurrence: 'none' });
-    setShowAddModal(false); setSelectedCalendarDate(null);
+    setShowAddModal(false); 
+    setSelectedCalendarDate(null);
+    setEditingEvent(null);
   };
 
   const getMealForDay = (day) => (weekData.meals || []).find(m => m.day === day);
@@ -267,16 +321,34 @@ export default function FamilyHQ() {
     );
   };
 
-  const EventCard = ({ event, showDate }) => {
+  // Clickable Event Card that opens edit modal
+  const EventCard = ({ event, showDate, onClick }) => {
     const cat = getCategoryInfo(event.category);
     return (
-      <div className="flex items-start gap-2 p-2 rounded-xl bg-stone-50 group hover:bg-stone-100">
+      <div 
+        className="flex items-start gap-2 p-2 rounded-xl bg-stone-50 group hover:bg-stone-100 cursor-pointer"
+        onClick={() => onClick ? onClick(event) : openEditModal(event)}
+      >
         <div className="w-1 h-10 rounded-full" style={{ backgroundColor: cat.color }} />
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1"><span>{cat.icon}</span><p className="font-semibold text-stone-800 text-sm truncate">{event.title}</p>{event.recurrence !== 'none' && <span className="text-xs text-stone-400">🔄</span>}</div>
-          <div className="flex items-center gap-2 flex-wrap"><span className="text-xs text-stone-500">{formatTime(event.time)}</span>{showDate && <span className="text-xs text-stone-400">{new Date(event.date + 'T00:00:00').toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })}</span>}<PersonBadge person={event.person} />{event.kid !== 'None' && <KidBadge kid={event.kid} />}</div>
+          <div className="flex items-center gap-1">
+            <span>{cat.icon}</span>
+            <p className="font-semibold text-stone-800 text-sm truncate">{event.title}</p>
+            {event.recurrence !== 'none' && <span className="text-xs text-stone-400">🔄</span>}
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-stone-500">{formatTime(event.time)}</span>
+            {showDate && <span className="text-xs text-stone-400">{new Date(event.date + 'T00:00:00').toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })}</span>}
+            <PersonBadge person={event.person} />
+            {event.kid !== 'None' && <KidBadge kid={event.kid} />}
+          </div>
         </div>
-        <button onClick={() => deleteEvent(event.id)} className="opacity-0 group-hover:opacity-100 w-5 h-5 rounded-full bg-red-100 text-red-500 text-xs">✕</button>
+        <button 
+          onClick={(e) => { e.stopPropagation(); deleteEvent(event.id); }} 
+          className="opacity-0 group-hover:opacity-100 w-5 h-5 rounded-full bg-red-100 text-red-500 text-xs"
+        >
+          ✕
+        </button>
       </div>
     );
   };
@@ -350,23 +422,24 @@ export default function FamilyHQ() {
           </div>
           {selectedCalendarDate && <div className="bg-white rounded-xl p-4 border border-stone-100">
             <div className="flex items-center justify-between mb-3"><h4 className="font-bold text-stone-800 text-sm">{new Date(selectedCalendarDate + 'T00:00:00').toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' })}</h4><button onClick={() => openModal('event', selectedCalendarDate)} className="px-3 py-1 rounded-full bg-amber-500 text-white text-xs">+ Add</button></div>
-            {getEventsForDate(selectedCalendarDate).length === 0 ? <p className="text-stone-400 text-sm text-center py-3">No events</p> : <div className="space-y-2">{getEventsForDate(selectedCalendarDate).map((e,i) => <EventCard key={i} event={e} />)}</div>}
+            {getEventsForDate(selectedCalendarDate).length === 0 ? <p className="text-stone-400 text-sm text-center py-3">No events</p> : <div className="space-y-2">{getEventsForDate(selectedCalendarDate).map((e,i) => <EventCard key={i} event={e} onClick={openEditModal} />)}</div>}
           </div>}
           <div className="flex flex-wrap gap-2">{eventCategories.map(c => <div key={c.id} className="flex items-center gap-1 text-xs"><div className="w-2 h-2 rounded-full" style={{ backgroundColor: c.color }}></div>{c.label}</div>)}</div>
         </> : <>
           <button onClick={() => openModal('event')} className="w-full py-3 rounded-xl border-2 border-dashed border-stone-200 text-stone-500 text-sm hover:border-amber-300">+ Add New Event</button>
-          <div className="space-y-2">{getUpcomingEvents().length === 0 ? <p className="text-stone-400 text-center py-8">No upcoming events</p> : getUpcomingEvents().map((e,i) => <EventCard key={i} event={{...e, date: e.displayDate}} showDate />)}</div>
+          <div className="space-y-2">{getUpcomingEvents().length === 0 ? <p className="text-stone-400 text-center py-8">No upcoming events</p> : getUpcomingEvents().map((e,i) => <EventCard key={i} event={{...e, date: e.displayDate}} showDate onClick={openEditModal} />)}</div>
         </>}
       </div>
     );
   };
 
   const DashboardView = () => {
-    const tomorrowIndex = (selectedDay + 1) % 7; const lunch = getLunchForDay(tomorrowIndex);
-    const isToday = selectedDay === getTodayIndex();
+    const tomorrowIndex = (selectedDay + 1) % 7; 
+    const lunch = getLunchForDay(tomorrowIndex);
     
     return (
       <div className="space-y-4 pb-20">
+        {/* Week Navigation */}
         <div className="bg-gradient-to-br from-amber-50 to-orange-50 rounded-2xl p-4 border border-amber-100">
           <div className="flex items-center justify-between mb-3">
             <div>
@@ -378,20 +451,51 @@ export default function FamilyHQ() {
               {isOnline ? 'Synced' : 'Offline'}
             </span>
           </div>
-          <div className="flex gap-1">
-            {shortDays.map((d, i) => (
-              <button 
-                key={d} 
-                onClick={() => setSelectedDay(i)} 
-                className={`flex-1 py-1.5 rounded-lg text-xs font-semibold ${selectedDay === i ? 'bg-amber-500 text-white shadow-md' : i === getTodayIndex() ? 'bg-amber-200 text-amber-800' : 'bg-white text-stone-600'}`}
-              >
-                {d}
-              </button>
-            ))}
-          </div>
-          {!isToday && (
+          
+          {/* Week Selector */}
+          <div className="flex items-center justify-between mb-2">
             <button 
-              onClick={() => setSelectedDay(getTodayIndex())} 
+              onClick={() => setSelectedWeekOffset(Math.max(0, selectedWeekOffset - 1))}
+              disabled={selectedWeekOffset === 0}
+              className={`w-8 h-8 rounded-full flex items-center justify-center ${selectedWeekOffset === 0 ? 'bg-stone-100 text-stone-300' : 'bg-white text-stone-600'}`}
+            >
+              ‹
+            </button>
+            <p className="text-xs font-medium text-stone-600">{formatWeekLabel()}</p>
+            <button 
+              onClick={() => setSelectedWeekOffset(selectedWeekOffset + 1)}
+              className="w-8 h-8 rounded-full bg-white text-stone-600 flex items-center justify-center"
+            >
+              ›
+            </button>
+          </div>
+          
+          {/* Day Buttons */}
+          <div className="flex gap-1">
+            {shortDays.map((d, i) => {
+              const isCurrentDay = selectedWeekOffset === 0 && i === getTodayIndex();
+              return (
+                <button 
+                  key={d} 
+                  onClick={() => setSelectedDay(i)} 
+                  className={`flex-1 py-1.5 rounded-lg text-xs font-semibold ${
+                    selectedDay === i 
+                      ? 'bg-amber-500 text-white shadow-md' 
+                      : isCurrentDay 
+                        ? 'bg-amber-200 text-amber-800' 
+                        : 'bg-white text-stone-600'
+                  }`}
+                >
+                  {d}
+                </button>
+              );
+            })}
+          </div>
+          
+          {/* Back to Today button */}
+          {!isViewingToday() && (
+            <button 
+              onClick={() => { setSelectedWeekOffset(0); setSelectedDay(getTodayIndex()); }} 
               className="w-full mt-2 py-1.5 text-xs text-amber-600 font-medium hover:text-amber-700"
             >
               ← Back to Today
@@ -399,22 +503,37 @@ export default function FamilyHQ() {
           )}
         </div>
 
-        <WeatherWidget />
+        {/* Weather Widget - only show for current week */}
+        {selectedWeekOffset === 0 && <WeatherWidget />}
 
+        {/* Schedule */}
         <div className="bg-white rounded-2xl p-4 border border-stone-100">
-          <div className="flex items-center justify-between mb-3"><h3 className="font-bold text-stone-800">📅 Schedule</h3><button onClick={() => setCurrentView('calendar')} className="text-xs text-amber-600 font-medium">View Calendar →</button></div>
-          {getEventsForDay(selectedDay).length === 0 ? <p className="text-stone-400 text-sm py-3 text-center">No events</p> : <div className="space-y-2">{getEventsForDay(selectedDay).map((e,i) => <EventCard key={i} event={e} />)}</div>}
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-bold text-stone-800">📅 Schedule</h3>
+            <div className="flex gap-2">
+              <button onClick={() => openModal('event', formatDateLocal(getDateForDay(selectedDay)))} className="w-7 h-7 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center font-bold text-sm">+</button>
+              <button onClick={() => setCurrentView('calendar')} className="text-xs text-amber-600 font-medium">Calendar →</button>
+            </div>
+          </div>
+          {getEventsForDay(selectedDay).length === 0 
+            ? <p className="text-stone-400 text-sm py-3 text-center">No events — tap + to add</p> 
+            : <div className="space-y-2">{getEventsForDay(selectedDay).map((e,i) => <EventCard key={i} event={e} onClick={openEditModal} />)}</div>
+          }
         </div>
+
         <KidSection name="Camilla" data={weekData.kids.camilla} />
         <KidSection name="Asher" data={weekData.kids.asher} />
+        
         <div className="bg-gradient-to-br from-orange-50 to-amber-50 rounded-2xl p-4 border border-orange-100">
           <div className="flex items-center justify-between mb-2"><h3 className="font-bold text-stone-800">🍽️ Tonight's Dinner</h3><button onClick={() => openModal('meal')} className="w-7 h-7 rounded-full bg-orange-100 text-orange-600 font-bold">+</button></div>
           {getMealForDay(selectedDay) ? <div className="bg-white/70 rounded-xl p-3"><p className="font-semibold text-stone-800">{getMealForDay(selectedDay).meal}</p><p className="text-xs text-stone-500 mt-1">Chef: <PersonBadge person={getMealForDay(selectedDay).prep} /></p></div> : <p className="text-stone-400 text-sm py-3 text-center bg-white/50 rounded-xl">No dinner planned</p>}
         </div>
+        
         <div className="bg-gradient-to-br from-sky-50 to-blue-50 rounded-2xl p-4 border border-sky-100">
           <h3 className="font-bold text-stone-800 mb-3">🥪 Tomorrow's Lunches <span className="text-xs font-normal text-stone-500">({days[tomorrowIndex]})</span></h3>
           <div className="space-y-2">{familyMembers.map(m => <div key={m} className="bg-white/70 rounded-xl p-2"><label className="text-xs text-stone-500">{m === 'Camilla' ? '👧' : m === 'Asher' ? '👦' : m === 'Chris' ? '👨' : '👩'} {m}</label><input type="text" value={lunch[m.toLowerCase()] || ''} onChange={(e) => updateLunch(tomorrowIndex, m, e.target.value)} placeholder={`What's ${m} having?`} className="w-full mt-1 px-2 py-1.5 rounded-lg border border-stone-200 text-sm" /></div>)}</div>
         </div>
+        
         <div className="bg-white rounded-2xl p-4 border border-stone-100">
           <div className="flex items-center justify-between mb-3"><h3 className="font-bold text-stone-800">✨ Today's Chores</h3><button onClick={() => openModal('chore')} className="w-7 h-7 rounded-full bg-stone-100 text-stone-600 font-bold">+</button></div>
           {getChoresForDay(selectedDay).length === 0 ? <p className="text-stone-400 text-sm py-3 text-center">No chores! 🎉</p> : <div className="space-y-2">{getChoresForDay(selectedDay).map(c => <div key={c.id} className={`flex items-center gap-2 p-2 rounded-xl group ${c.done ? 'bg-emerald-50' : 'bg-stone-50'}`}><button onClick={() => toggleChore(c.id)} className={`w-5 h-5 rounded-full border-2 text-xs ${c.done ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-stone-300'}`}>{c.done && '✓'}</button><span className={`flex-1 text-sm ${c.done ? 'line-through text-stone-400' : ''}`}>{c.task}</span><PersonBadge person={c.person} /><button onClick={() => deleteChore(c.id)} className="opacity-0 group-hover:opacity-100 w-5 h-5 rounded-full bg-red-100 text-red-500 text-xs">✕</button></div>)}</div>}
@@ -460,8 +579,13 @@ export default function FamilyHQ() {
       <main className="max-w-md mx-auto px-4 py-4">{currentView === 'dashboard' && <DashboardView />}{currentView === 'calendar' && <CalendarView />}{currentView === 'meals' && <MealsView />}{currentView === 'grocery' && <GroceryView />}</main>
       <nav className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-xl border-t border-stone-100 px-4 py-2 pb-4"><div className="flex justify-around max-w-md mx-auto"><NavButton view="dashboard" icon="📋" label="Today" /><NavButton view="calendar" icon="📅" label="Calendar" /><NavButton view="meals" icon="🍽️" label="Meals" /><NavButton view="grocery" icon="🛒" label="Grocery" /></div></nav>
       
-      {showAddModal && <div className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center" onClick={() => { setShowAddModal(false); setSelectedCalendarDate(null); }}><div className="bg-white w-full max-w-md rounded-t-2xl p-5 max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-4"><h3 className="font-bold text-stone-800">{modalType === 'event' ? '📅 Add Event' : modalType === 'meal' ? '🍽️ Add Meal' : modalType === 'chore' ? '✨ Add Chore' : '🛒 Add Item'}</h3><button onClick={() => setShowAddModal(false)} className="w-7 h-7 rounded-full bg-stone-100 text-stone-500">✕</button></div>
+      {showAddModal && <div className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center" onClick={() => { setShowAddModal(false); setSelectedCalendarDate(null); setEditingEvent(null); }}><div className="bg-white w-full max-w-md rounded-t-2xl p-5 max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-bold text-stone-800">
+            {modalType === 'event' ? (editingEvent ? '✏️ Edit Event' : '📅 Add Event') : modalType === 'meal' ? '🍽️ Add Meal' : modalType === 'chore' ? '✨ Add Chore' : '🛒 Add Item'}
+          </h3>
+          <button onClick={() => { setShowAddModal(false); setEditingEvent(null); }} className="w-7 h-7 rounded-full bg-stone-100 text-stone-500">✕</button>
+        </div>
         <div className="space-y-3">
           {modalType === 'event' && <>
             <input type="text" placeholder="Event title" value={newItem.title} onChange={e => setNewItem(p => ({ ...p, title: e.target.value }))} className="w-full px-3 py-2 rounded-xl border border-stone-200 text-sm" />
@@ -475,6 +599,14 @@ export default function FamilyHQ() {
               <WhoSelector />
               <div><label className="text-xs text-stone-500">Kid</label><select value={newItem.kid} onChange={e => setNewItem(p => ({ ...p, kid: e.target.value }))} className="w-full px-3 py-2 rounded-xl border border-stone-200 text-sm"><option>Camilla</option><option>Asher</option><option>Both</option><option>None</option></select></div>
             </div>
+            {editingEvent && (
+              <button 
+                onClick={() => { deleteEvent(editingEvent.id); setShowAddModal(false); setEditingEvent(null); }} 
+                className="w-full py-2 rounded-xl border border-red-200 text-red-500 text-sm font-medium hover:bg-red-50"
+              >
+                🗑️ Delete Event
+              </button>
+            )}
           </>}
           {modalType === 'meal' && <>
             <input type="text" placeholder="What's for dinner?" value={newItem.meal} onChange={e => setNewItem(p => ({ ...p, meal: e.target.value }))} className="w-full px-3 py-2 rounded-xl border border-stone-200 text-sm" />
@@ -491,7 +623,9 @@ export default function FamilyHQ() {
             </div>
           </>}
           {modalType === 'grocery' && <input type="text" placeholder="Add item..." value={newItem.item} onChange={e => setNewItem(p => ({ ...p, item: e.target.value }))} onKeyDown={e => e.key === 'Enter' && addItem()} className="w-full px-3 py-2 rounded-xl border border-stone-200 text-sm" />}
-          <button onClick={addItem} className={`w-full py-3 rounded-xl text-white font-semibold text-sm ${modalType === 'event' ? 'bg-amber-500' : modalType === 'meal' ? 'bg-orange-500' : modalType === 'chore' ? 'bg-stone-600' : 'bg-blue-500'}`}>Add</button>
+          <button onClick={addItem} className={`w-full py-3 rounded-xl text-white font-semibold text-sm ${modalType === 'event' ? 'bg-amber-500' : modalType === 'meal' ? 'bg-orange-500' : modalType === 'chore' ? 'bg-stone-600' : 'bg-blue-500'}`}>
+            {editingEvent ? 'Save Changes' : 'Add'}
+          </button>
         </div>
       </div></div>}
     </div>
