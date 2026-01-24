@@ -153,7 +153,7 @@ export default function FamilyHQ() {
   };
 
   const [weekData, setWeekData] = useState(defaultData);
-  const [newItem, setNewItem] = useState({ title: '', time: '09:00', person: 'Chris', personOther: '', kid: 'Camilla', day: 0, meal: '', prep: 'Chris', task: '', item: '', date: formatDateLocal(new Date()), category: 'kids', recurrence: 'none' });
+  const [newItem, setNewItem] = useState({ title: '', time: '09:00', person: 'Chris', personOther: '', kid: 'Camilla', day: 0, meal: '', prep: 'Chris', task: '', item: '', date: formatDateLocal(new Date()), category: 'kids', recurrence: 'none', allDay: false });
 
   // Firebase sync
   useEffect(() => {
@@ -187,7 +187,17 @@ export default function FamilyHQ() {
     return daysDiff === 0;
   };
 
-  const getEventsForDate = (dateStr) => (weekData.calendarEvents || []).filter(e => eventOccursOnDate(e, dateStr)).sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+  // Sort events: all-day events first, then by time
+  const getEventsForDate = (dateStr) => {
+    const events = (weekData.calendarEvents || []).filter(e => eventOccursOnDate(e, dateStr));
+    return events.sort((a, b) => {
+      // All-day events come first
+      if (a.allDay && !b.allDay) return -1;
+      if (!a.allDay && b.allDay) return 1;
+      // Then sort by time
+      return (a.time || '').localeCompare(b.time || '');
+    });
+  };
   
   const getEventsForDay = (dayIndex) => {
     const date = getDateForDay(dayIndex);
@@ -210,7 +220,7 @@ export default function FamilyHQ() {
     setModalType(type);
     setEditingEvent(null);
     const dateStr = presetDate || formatDateLocal(getDateForDay(selectedDay));
-    setNewItem({ title: '', time: '09:00', person: 'Chris', personOther: '', kid: 'Camilla', day: selectedDay, meal: '', prep: 'Chris', task: '', item: '', date: dateStr, category: 'kids', recurrence: 'none' }); 
+    setNewItem({ title: '', time: '09:00', person: 'Chris', personOther: '', kid: 'Camilla', day: selectedDay, meal: '', prep: 'Chris', task: '', item: '', date: dateStr, category: 'kids', recurrence: 'none', allDay: false }); 
     setShowAddModal(true); 
   };
 
@@ -221,7 +231,7 @@ export default function FamilyHQ() {
     const isOtherPerson = !people.includes(event.person);
     setNewItem({
       title: event.title,
-      time: event.time,
+      time: event.time || '09:00',
       person: isOtherPerson ? 'Other' : event.person,
       personOther: isOtherPerson ? event.person : '',
       kid: event.kid,
@@ -232,7 +242,8 @@ export default function FamilyHQ() {
       item: '',
       date: event.date,
       category: event.category,
-      recurrence: event.recurrence
+      recurrence: event.recurrence,
+      allDay: event.allDay || false
     });
     setShowAddModal(true);
   };
@@ -246,13 +257,13 @@ export default function FamilyHQ() {
         // Update existing event
         newData.calendarEvents = weekData.calendarEvents.map(e => 
           e.id === editingEvent.id 
-            ? { ...e, date: newItem.date, time: newItem.time, title: newItem.title, person: finalPerson, kid: newItem.kid, category: newItem.category, recurrence: newItem.recurrence }
+            ? { ...e, date: newItem.date, time: newItem.allDay ? null : newItem.time, title: newItem.title, person: finalPerson, kid: newItem.kid, category: newItem.category, recurrence: newItem.recurrence, allDay: newItem.allDay }
             : e
         );
       } else {
         // Add new event
         const id = Date.now();
-        newData.calendarEvents = [...(weekData.calendarEvents || []), { id, date: newItem.date, time: newItem.time, title: newItem.title, person: finalPerson, kid: newItem.kid, category: newItem.category, recurrence: newItem.recurrence }];
+        newData.calendarEvents = [...(weekData.calendarEvents || []), { id, date: newItem.date, time: newItem.allDay ? null : newItem.time, title: newItem.title, person: finalPerson, kid: newItem.kid, category: newItem.category, recurrence: newItem.recurrence, allDay: newItem.allDay }];
       }
     } else if (modalType === 'meal' && newItem.meal) {
       const id = Date.now();
@@ -267,7 +278,7 @@ export default function FamilyHQ() {
     
     setWeekData(newData); 
     saveToFirebase(newData);
-    setNewItem({ title: '', time: '09:00', person: 'Chris', personOther: '', kid: 'Camilla', day: selectedDay, meal: '', prep: 'Chris', task: '', item: '', date: formatDateLocal(new Date()), category: 'kids', recurrence: 'none' });
+    setNewItem({ title: '', time: '09:00', person: 'Chris', personOther: '', kid: 'Camilla', day: selectedDay, meal: '', prep: 'Chris', task: '', item: '', date: formatDateLocal(new Date()), category: 'kids', recurrence: 'none', allDay: false });
     setShowAddModal(false); 
     setSelectedCalendarDate(null);
     setEditingEvent(null);
@@ -324,9 +335,11 @@ export default function FamilyHQ() {
   // Clickable Event Card that opens edit modal
   const EventCard = ({ event, showDate, onClick }) => {
     const cat = getCategoryInfo(event.category);
+    const isAllDay = event.allDay;
+    
     return (
       <div 
-        className="flex items-start gap-2 p-2 rounded-xl bg-stone-50 group hover:bg-stone-100 cursor-pointer"
+        className={`flex items-start gap-2 p-2 rounded-xl group cursor-pointer ${isAllDay ? 'bg-gradient-to-r from-purple-50 to-indigo-50 border border-purple-200' : 'bg-stone-50 hover:bg-stone-100'}`}
         onClick={() => onClick ? onClick(event) : openEditModal(event)}
       >
         <div className="w-1 h-10 rounded-full" style={{ backgroundColor: cat.color }} />
@@ -335,9 +348,10 @@ export default function FamilyHQ() {
             <span>{cat.icon}</span>
             <p className="font-semibold text-stone-800 text-sm truncate">{event.title}</p>
             {event.recurrence !== 'none' && <span className="text-xs text-stone-400">🔄</span>}
+            {isAllDay && <span className="text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full font-medium">All Day</span>}
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs text-stone-500">{formatTime(event.time)}</span>
+            {!isAllDay && <span className="text-xs text-stone-500">{formatTime(event.time)}</span>}
             {showDate && <span className="text-xs text-stone-400">{new Date(event.date + 'T00:00:00').toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })}</span>}
             <PersonBadge person={event.person} />
             {event.kid !== 'None' && <KidBadge kid={event.kid} />}
@@ -416,7 +430,7 @@ export default function FamilyHQ() {
               const events = dateStr ? getEventsForDate(dateStr) : [];
               return <div key={i} onClick={() => day && setSelectedCalendarDate(dateStr)} className={`min-h-[52px] p-1 border-b border-r border-stone-100 cursor-pointer ${!day ? 'bg-stone-50' : selectedCalendarDate === dateStr ? 'bg-amber-50' : 'hover:bg-stone-50'}`}>
                 {day && <><div className={`text-xs w-5 h-5 flex items-center justify-center rounded-full ${isToday(day) ? 'bg-amber-500 text-white' : ''}`}>{day}</div>
-                <div className="space-y-0.5">{events.slice(0,2).map((e,j) => <div key={j} className="text-white px-1 rounded truncate" style={{ backgroundColor: getCategoryInfo(e.category).color, fontSize: 9 }}>{e.title}</div>)}{events.length > 2 && <div className="text-stone-400" style={{ fontSize: 9 }}>+{events.length-2}</div>}</div></>}
+                <div className="space-y-0.5">{events.slice(0,2).map((e,j) => <div key={j} className={`text-white px-1 rounded truncate ${e.allDay ? 'font-semibold' : ''}`} style={{ backgroundColor: getCategoryInfo(e.category).color, fontSize: 9 }}>{e.allDay ? '● ' : ''}{e.title}</div>)}{events.length > 2 && <div className="text-stone-400" style={{ fontSize: 9 }}>+{events.length-2}</div>}</div></>}
               </div>;
             })}</div>
           </div>
@@ -589,9 +603,23 @@ export default function FamilyHQ() {
         <div className="space-y-3">
           {modalType === 'event' && <>
             <input type="text" placeholder="Event title" value={newItem.title} onChange={e => setNewItem(p => ({ ...p, title: e.target.value }))} className="w-full px-3 py-2 rounded-xl border border-stone-200 text-sm" />
+            
+            {/* All Day Toggle */}
+            <div className="flex items-center justify-between bg-stone-50 rounded-xl p-3">
+              <span className="text-sm text-stone-700">All Day Event</span>
+              <button 
+                onClick={() => setNewItem(p => ({ ...p, allDay: !p.allDay }))}
+                className={`w-12 h-6 rounded-full transition-colors ${newItem.allDay ? 'bg-purple-500' : 'bg-stone-300'}`}
+              >
+                <div className={`w-5 h-5 bg-white rounded-full shadow-sm transform transition-transform ${newItem.allDay ? 'translate-x-6' : 'translate-x-0.5'}`} />
+              </button>
+            </div>
+            
             <div className="grid grid-cols-2 gap-2">
               <div><label className="text-xs text-stone-500">Date</label><input type="date" value={newItem.date} onChange={e => setNewItem(p => ({ ...p, date: e.target.value }))} className="w-full px-3 py-2 rounded-xl border border-stone-200 text-sm" /></div>
-              <div><label className="text-xs text-stone-500">Time</label><input type="time" value={newItem.time} onChange={e => setNewItem(p => ({ ...p, time: e.target.value }))} className="w-full px-3 py-2 rounded-xl border border-stone-200 text-sm" /></div>
+              {!newItem.allDay && (
+                <div><label className="text-xs text-stone-500">Time</label><input type="time" value={newItem.time} onChange={e => setNewItem(p => ({ ...p, time: e.target.value }))} className="w-full px-3 py-2 rounded-xl border border-stone-200 text-sm" /></div>
+              )}
             </div>
             <div><label className="text-xs text-stone-500">Category</label><div className="grid grid-cols-3 gap-2 mt-1">{eventCategories.map(c => <button key={c.id} onClick={() => setNewItem(p => ({ ...p, category: c.id }))} className={`flex items-center gap-1 px-2 py-2 rounded-xl border text-xs ${newItem.category === c.id ? 'border-amber-400 bg-amber-50' : 'border-stone-200'}`}><span>{c.icon}</span>{c.label}</button>)}</div></div>
             <div><label className="text-xs text-stone-500">Repeats</label><select value={newItem.recurrence} onChange={e => setNewItem(p => ({ ...p, recurrence: e.target.value }))} className="w-full px-3 py-2 rounded-xl border border-stone-200 text-sm mt-1">{recurrenceOptions.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}</select></div>
