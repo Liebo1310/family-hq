@@ -26,6 +26,7 @@ export default function FamilyHQ() {
   
   const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
   const shortDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const dayLetters = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
   const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
   const locations = ['Little Palace', 'Cronulla Pre-School', 'No Daycare'];
   const people = ['Chris', 'Alex', 'Both'];
@@ -150,7 +151,7 @@ export default function FamilyHQ() {
     title: '', time: '09:00', person: 'Chris', personOther: '', kid: 'Camilla', 
     day: 0, meal: '', prep: 'Chris', task: '', item: '', 
     date: formatDateLocal(new Date()), category: 'kids', recurrence: 'none', allDay: false,
-    choreRecurrence: 'none'
+    choreDays: [] // Array of day indices (0-6) for chore repeat days
   });
 
   useEffect(() => {
@@ -203,26 +204,36 @@ export default function FamilyHQ() {
     return daysDiff === 0;
   };
 
-  // Check if chore occurs on a specific day (handles recurrence)
+  // Check if chore occurs on a specific day (handles repeat days)
   const choreOccursOnDay = (chore, targetDayIndex) => {
-    const choreDay = chore.day;
-    
-    if (!chore.recurrence || chore.recurrence === 'none') {
-      return choreDay === targetDayIndex;
+    // If chore has repeatDays array, check if target day is in it
+    if (chore.repeatDays && Array.isArray(chore.repeatDays) && chore.repeatDays.length > 0) {
+      return chore.repeatDays.includes(targetDayIndex);
     }
-    if (chore.recurrence === 'daily') {
-      return true;
+    // Otherwise it's a one-time chore, check if it matches the original day
+    return chore.day === targetDayIndex;
+  };
+
+  // Get display text for chore repeat days
+  const getChoreRepeatLabel = (chore) => {
+    if (!chore.repeatDays || chore.repeatDays.length === 0) {
+      return null; // One-time chore
     }
-    if (chore.recurrence === 'weekly') {
-      return choreDay === targetDayIndex;
+    if (chore.repeatDays.length === 7) {
+      return 'Daily';
     }
-    if (chore.recurrence === 'weekdays') {
-      return targetDayIndex >= 0 && targetDayIndex <= 4; // Mon-Fri
+    if (chore.repeatDays.length === 5 && 
+        chore.repeatDays.includes(0) && chore.repeatDays.includes(1) && 
+        chore.repeatDays.includes(2) && chore.repeatDays.includes(3) && 
+        chore.repeatDays.includes(4)) {
+      return 'Weekdays';
     }
-    if (chore.recurrence === 'weekends') {
-      return targetDayIndex === 5 || targetDayIndex === 6; // Sat-Sun
+    if (chore.repeatDays.length === 2 && 
+        chore.repeatDays.includes(5) && chore.repeatDays.includes(6)) {
+      return 'Weekends';
     }
-    return choreDay === targetDayIndex;
+    // Show abbreviated days
+    return chore.repeatDays.sort((a, b) => a - b).map(d => shortDays[d].charAt(0)).join(', ');
   };
 
   const getEventsForDate = (dateStr) => {
@@ -270,7 +281,7 @@ export default function FamilyHQ() {
       title: '', time: '09:00', person: 'Chris', personOther: '', kid: 'Camilla', 
       day: selectedDay, meal: '', prep: 'Chris', task: '', item: '', 
       date: dateStr, category: 'kids', recurrence: 'none', allDay: false,
-      choreRecurrence: 'none'
+      choreDays: []
     }); 
     setShowAddModal(true); 
   };
@@ -295,7 +306,7 @@ export default function FamilyHQ() {
       category: event.category,
       recurrence: event.recurrence,
       allDay: event.allDay || false,
-      choreRecurrence: 'none'
+      choreDays: []
     });
     setShowAddModal(true);
   };
@@ -320,9 +331,20 @@ export default function FamilyHQ() {
       category: 'kids',
       recurrence: 'none',
       allDay: false,
-      choreRecurrence: chore.recurrence || 'none'
+      choreDays: chore.repeatDays || []
     });
     setShowAddModal(true);
+  };
+
+  const toggleChoreDay = (dayIndex) => {
+    setNewItem(prev => {
+      const currentDays = prev.choreDays || [];
+      if (currentDays.includes(dayIndex)) {
+        return { ...prev, choreDays: currentDays.filter(d => d !== dayIndex) };
+      } else {
+        return { ...prev, choreDays: [...currentDays, dayIndex].sort((a, b) => a - b) };
+      }
+    });
   };
 
   const addItem = () => {
@@ -347,12 +369,19 @@ export default function FamilyHQ() {
       if (editingChore) {
         newData.chores = weekData.chores.map(c => 
           c.id === editingChore.id 
-            ? { ...c, task: newItem.task, person: finalPerson, day: newItem.day, recurrence: newItem.choreRecurrence }
+            ? { ...c, task: newItem.task, person: finalPerson, day: newItem.day, repeatDays: newItem.choreDays.length > 0 ? newItem.choreDays : null }
             : c
         );
       } else {
         const id = Date.now();
-        newData.chores = [...(weekData.chores || []), { id, day: newItem.day, task: newItem.task, person: finalPerson, done: false, recurrence: newItem.choreRecurrence }];
+        newData.chores = [...(weekData.chores || []), { 
+          id, 
+          day: newItem.day, 
+          task: newItem.task, 
+          person: finalPerson, 
+          done: false, 
+          repeatDays: newItem.choreDays.length > 0 ? newItem.choreDays : null 
+        }];
       }
     } else if (modalType === 'grocery' && newItem.item) {
       const id = Date.now();
@@ -365,7 +394,7 @@ export default function FamilyHQ() {
       title: '', time: '09:00', person: 'Chris', personOther: '', kid: 'Camilla', 
       day: selectedDay, meal: '', prep: 'Chris', task: '', item: '', 
       date: formatDateLocal(new Date()), category: 'kids', recurrence: 'none', allDay: false,
-      choreRecurrence: 'none'
+      choreDays: []
     });
     setShowAddModal(false); 
     setSelectedCalendarDate(null);
@@ -375,19 +404,6 @@ export default function FamilyHQ() {
 
   const getMealForDay = (day) => (weekData.meals || []).find(m => m.day === day);
   const getChoresForDay = (day) => (weekData.chores || []).filter(c => choreOccursOnDay(c, day));
-
-  const choreRecurrenceOptions = [
-    { id: 'none', label: 'Does not repeat' },
-    { id: 'daily', label: 'Daily' },
-    { id: 'weekly', label: 'Weekly' },
-    { id: 'weekdays', label: 'Weekdays (Mon-Fri)' },
-    { id: 'weekends', label: 'Weekends (Sat-Sun)' },
-  ];
-
-  const getChoreRecurrenceLabel = (recurrence) => {
-    const option = choreRecurrenceOptions.find(o => o.id === recurrence);
-    return option ? option.label : '';
-  };
 
   const PersonBadge = ({ person }) => <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${person === 'Chris' ? 'bg-blue-100 text-blue-700' : person === 'Alex' ? 'bg-rose-100 text-rose-700' : person === 'Both' ? 'bg-purple-100 text-purple-700' : 'bg-stone-200 text-stone-700'}`}>{person}</span>;
   const KidBadge = ({ kid }) => <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${kid === 'Camilla' ? 'bg-pink-100 text-pink-700' : kid === 'Asher' ? 'bg-emerald-100 text-emerald-700' : kid === 'Both' ? 'bg-amber-100 text-amber-700' : 'bg-stone-100 text-stone-600'}`}>{kid}</span>;
@@ -743,33 +759,41 @@ export default function FamilyHQ() {
         
         <div className="bg-white rounded-2xl p-4 border border-stone-100">
           <div className="flex items-center justify-between mb-3"><h3 className="font-bold text-stone-800">✨ Chores</h3><button onClick={() => openModal('chore')} className="w-7 h-7 rounded-full bg-stone-100 text-stone-600 font-bold">+</button></div>
-          {getChoresForDay(selectedDay).length === 0 ? <p className="text-stone-400 text-sm py-3 text-center">No chores! 🎉</p> : <div className="space-y-2">{getChoresForDay(selectedDay).map(c => (
-            <div 
-              key={c.id} 
-              className={`flex items-center gap-2 p-2 rounded-xl group cursor-pointer ${c.done ? 'bg-emerald-50' : 'bg-stone-50'}`}
-              onClick={() => openEditChoreModal(c)}
-            >
-              <button 
-                onClick={(e) => { e.stopPropagation(); toggleChore(c.id); }} 
-                className={`w-5 h-5 rounded-full border-2 text-xs flex-shrink-0 ${c.done ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-stone-300'}`}
+          {getChoresForDay(selectedDay).length === 0 ? <p className="text-stone-400 text-sm py-3 text-center">No chores! 🎉</p> : <div className="space-y-2">{getChoresForDay(selectedDay).map(c => {
+            const repeatLabel = getChoreRepeatLabel(c);
+            return (
+              <div 
+                key={c.id} 
+                className={`flex items-center gap-2 p-2 rounded-xl group cursor-pointer ${c.done ? 'bg-emerald-50' : 'bg-stone-50'}`}
+                onClick={() => openEditChoreModal(c)}
               >
-                {c.done && '✓'}
-              </button>
-              <div className="flex-1 min-w-0">
-                <span className={`text-sm ${c.done ? 'line-through text-stone-400' : ''}`}>{c.task}</span>
-                {c.recurrence && c.recurrence !== 'none' && (
-                  <span className="text-xs text-stone-400 ml-1">🔄</span>
-                )}
+                <button 
+                  onClick={(e) => { e.stopPropagation(); toggleChore(c.id); }} 
+                  className={`w-5 h-5 rounded-full border-2 text-xs flex-shrink-0 ${c.done ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-stone-300'}`}
+                >
+                  {c.done && '✓'}
+                </button>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1">
+                    <span className={`text-sm ${c.done ? 'line-through text-stone-400' : ''}`}>{c.task}</span>
+                    {repeatLabel && (
+                      <span className="text-xs text-stone-400">🔄</span>
+                    )}
+                  </div>
+                  {repeatLabel && (
+                    <span className="text-xs text-stone-400">{repeatLabel}</span>
+                  )}
+                </div>
+                <PersonBadge person={c.person} />
+                <button 
+                  onClick={(e) => { e.stopPropagation(); deleteChore(c.id); }} 
+                  className="opacity-0 group-hover:opacity-100 w-5 h-5 rounded-full bg-red-100 text-red-500 text-xs flex-shrink-0"
+                >
+                  ✕
+                </button>
               </div>
-              <PersonBadge person={c.person} />
-              <button 
-                onClick={(e) => { e.stopPropagation(); deleteChore(c.id); }} 
-                className="opacity-0 group-hover:opacity-100 w-5 h-5 rounded-full bg-red-100 text-red-500 text-xs flex-shrink-0"
-              >
-                ✕
-              </button>
-            </div>
-          ))}</div>}
+            );
+          })}</div>}
         </div>
       </div>
     );
@@ -805,6 +829,83 @@ export default function FamilyHQ() {
       )}
     </div>
   );
+
+  // Day picker component for chore repeat days
+  const ChoreDayPicker = () => {
+    const hasRepeatDays = newItem.choreDays && newItem.choreDays.length > 0;
+    
+    return (
+      <div>
+        <label className="text-xs text-stone-500">Repeats</label>
+        <div className="mt-2 space-y-2">
+          {/* Toggle between one-time and repeating */}
+          <div className="flex gap-2">
+            <button
+              onClick={() => setNewItem(p => ({ ...p, choreDays: [] }))}
+              className={`flex-1 py-2 px-3 rounded-xl text-xs font-medium border ${
+                !hasRepeatDays ? 'bg-amber-50 border-amber-400 text-amber-700' : 'border-stone-200 text-stone-600'
+              }`}
+            >
+              One-time ({days[newItem.day]})
+            </button>
+            <button
+              onClick={() => setNewItem(p => ({ ...p, choreDays: [p.day] }))}
+              className={`flex-1 py-2 px-3 rounded-xl text-xs font-medium border ${
+                hasRepeatDays ? 'bg-amber-50 border-amber-400 text-amber-700' : 'border-stone-200 text-stone-600'
+              }`}
+            >
+              Repeating
+            </button>
+          </div>
+          
+          {/* Day selection (only shown if repeating) */}
+          {hasRepeatDays && (
+            <div className="bg-stone-50 rounded-xl p-3">
+              <p className="text-xs text-stone-500 mb-2">Select days to repeat:</p>
+              <div className="flex gap-1">
+                {dayLetters.map((letter, index) => (
+                  <button
+                    key={index}
+                    onClick={() => toggleChoreDay(index)}
+                    className={`flex-1 py-2 rounded-lg text-xs font-semibold transition-colors ${
+                      newItem.choreDays.includes(index)
+                        ? 'bg-amber-500 text-white'
+                        : 'bg-white text-stone-600 border border-stone-200'
+                    }`}
+                  >
+                    {letter}
+                  </button>
+                ))}
+              </div>
+              {/* Quick select options */}
+              <div className="flex gap-2 mt-2">
+                <button
+                  onClick={() => setNewItem(p => ({ ...p, choreDays: [0, 1, 2, 3, 4, 5, 6] }))}
+                  className="text-xs text-amber-600 hover:text-amber-700"
+                >
+                  Every day
+                </button>
+                <span className="text-stone-300">|</span>
+                <button
+                  onClick={() => setNewItem(p => ({ ...p, choreDays: [0, 1, 2, 3, 4] }))}
+                  className="text-xs text-amber-600 hover:text-amber-700"
+                >
+                  Weekdays
+                </button>
+                <span className="text-stone-300">|</span>
+                <button
+                  onClick={() => setNewItem(p => ({ ...p, choreDays: [5, 6] }))}
+                  className="text-xs text-amber-600 hover:text-amber-700"
+                >
+                  Weekends
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-stone-50 via-amber-50/30 to-stone-50 font-sans">
@@ -866,14 +967,14 @@ export default function FamilyHQ() {
             <input type="text" placeholder="What needs doing?" value={newItem.task} onChange={e => setNewItem(p => ({ ...p, task: e.target.value }))} className="w-full px-3 py-2 rounded-xl border border-stone-200 text-sm" />
             <div className="grid grid-cols-2 gap-2">
               <WhoSelector />
-              <div><label className="text-xs text-stone-500">Day</label><select value={newItem.day} onChange={e => setNewItem(p => ({ ...p, day: parseInt(e.target.value) }))} className="w-full px-3 py-2 rounded-xl border border-stone-200 text-sm">{days.map((d, i) => <option key={d} value={i}>{d}</option>)}</select></div>
+              <div>
+                <label className="text-xs text-stone-500">Starting Day</label>
+                <select value={newItem.day} onChange={e => setNewItem(p => ({ ...p, day: parseInt(e.target.value) }))} className="w-full px-3 py-2 rounded-xl border border-stone-200 text-sm">
+                  {days.map((d, i) => <option key={d} value={i}>{d}</option>)}
+                </select>
+              </div>
             </div>
-            <div>
-              <label className="text-xs text-stone-500">Repeats</label>
-              <select value={newItem.choreRecurrence} onChange={e => setNewItem(p => ({ ...p, choreRecurrence: e.target.value }))} className="w-full px-3 py-2 rounded-xl border border-stone-200 text-sm mt-1">
-                {choreRecurrenceOptions.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
-              </select>
-            </div>
+            <ChoreDayPicker />
             {editingChore && (
               <button 
                 onClick={() => { deleteChore(editingChore.id); setShowAddModal(false); setEditingChore(null); }} 
