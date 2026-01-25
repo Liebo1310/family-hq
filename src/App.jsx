@@ -3,19 +3,19 @@ import { database } from './firebase';
 import { ref, onValue, set } from 'firebase/database';
 
 export default function FamilyHQ() {
-  // Get current day index (Monday = 0, Sunday = 6) using local timezone
   const getTodayIndex = () => {
     const today = new Date();
-    const day = today.getDay(); // 0 = Sunday, 1 = Monday, etc.
-    return day === 0 ? 6 : day - 1; // Convert to Monday = 0
+    const day = today.getDay();
+    return day === 0 ? 6 : day - 1;
   };
 
   const [currentView, setCurrentView] = useState('dashboard');
   const [selectedDay, setSelectedDay] = useState(getTodayIndex());
-  const [selectedWeekOffset, setSelectedWeekOffset] = useState(0); // 0 = this week, 1 = next week, etc.
+  const [selectedWeekOffset, setSelectedWeekOffset] = useState(0);
   const [showAddModal, setShowAddModal] = useState(false);
   const [modalType, setModalType] = useState('event');
-  const [editingEvent, setEditingEvent] = useState(null); // For editing existing events
+  const [editingEvent, setEditingEvent] = useState(null);
+  const [editingChore, setEditingChore] = useState(null);
   const [calendarView, setCalendarView] = useState('month');
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedCalendarDate, setSelectedCalendarDate] = useState(null);
@@ -30,7 +30,6 @@ export default function FamilyHQ() {
   const locations = ['Little Palace', 'Cronulla Pre-School', 'No Daycare'];
   const people = ['Chris', 'Alex', 'Both'];
   const caregiverOptions = ['Chris', 'Alex', 'Both', 'Other'];
-  const familyMembers = ['Camilla', 'Asher', 'Chris', 'Alex'];
   
   const eventCategories = [
     { id: 'kids', label: 'Kids', color: '#4ECDC4', icon: '👶' },
@@ -47,7 +46,6 @@ export default function FamilyHQ() {
     { id: 'monthly', label: 'Monthly' },
   ];
 
-  // Get the Monday of a specific week (0 = this week, 1 = next week, etc.)
   const getWeekStart = (weekOffset = 0) => {
     const now = new Date();
     const day = now.getDay();
@@ -58,7 +56,6 @@ export default function FamilyHQ() {
   
   const weekStartDate = getWeekStart(selectedWeekOffset);
   
-  // Get date for a specific day index (0 = Monday) in the selected week
   const getDateForDay = (dayIndex, weekOffset = selectedWeekOffset) => {
     const monday = getWeekStart(weekOffset);
     const d = new Date(monday);
@@ -66,7 +63,6 @@ export default function FamilyHQ() {
     return d;
   };
 
-  // Format date as YYYY-MM-DD in local timezone
   const formatDateLocal = (date) => {
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -74,7 +70,6 @@ export default function FamilyHQ() {
     return `${year}-${month}-${day}`;
   };
 
-  // Get the date for selected day
   const getSelectedDayDate = () => {
     const date = getDateForDay(selectedDay);
     return date.toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' });
@@ -94,10 +89,8 @@ export default function FamilyHQ() {
     }
   };
 
-  // Check if we're viewing the current week and current day
   const isViewingToday = () => selectedWeekOffset === 0 && selectedDay === getTodayIndex();
 
-  // Fetch weather for Sydney/Cronulla area
   useEffect(() => {
     const fetchWeather = async () => {
       try {
@@ -148,21 +141,23 @@ export default function FamilyHQ() {
       asher: Array(7).fill(null).map((_, i) => ({ day: i, location: i < 5 ? 'Little Palace' : 'No Daycare', dropoff: 'Alex', pickup: 'Chris', caregiver: 'Alex', caregiverOther: '' }))
     },
     meals: [],
-    lunches: Array(7).fill(null).map((_, i) => ({ day: i, camilla: '', asher: '', chris: '', alex: '' })),
     chores: [],
     grocery: []
   };
 
   const [weekData, setWeekData] = useState(defaultData);
-  const [newItem, setNewItem] = useState({ title: '', time: '09:00', person: 'Chris', personOther: '', kid: 'Camilla', day: 0, meal: '', prep: 'Chris', task: '', item: '', date: formatDateLocal(new Date()), category: 'kids', recurrence: 'none', allDay: false });
+  const [newItem, setNewItem] = useState({ 
+    title: '', time: '09:00', person: 'Chris', personOther: '', kid: 'Camilla', 
+    day: 0, meal: '', prep: 'Chris', task: '', item: '', 
+    date: formatDateLocal(new Date()), category: 'kids', recurrence: 'none', allDay: false,
+    choreRecurrence: 'none'
+  });
 
-  // Firebase sync
   useEffect(() => {
     const dataRef = ref(database, 'familyData');
     const unsubscribe = onValue(dataRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
-        // Ensure caregiver fields exist for backward compatibility
         const processKidData = (kidData, defaults) => {
           if (!kidData) return defaults;
           return kidData.map((d, i) => ({
@@ -179,8 +174,7 @@ export default function FamilyHQ() {
           kids: { 
             camilla: processKidData(data.kids?.camilla, defaultData.kids.camilla),
             asher: processKidData(data.kids?.asher, defaultData.kids.asher)
-          }, 
-          lunches: data.lunches || defaultData.lunches 
+          }
         });
       }
       setIsLoading(false);
@@ -209,14 +203,33 @@ export default function FamilyHQ() {
     return daysDiff === 0;
   };
 
-  // Sort events: all-day events first, then by time
+  // Check if chore occurs on a specific day (handles recurrence)
+  const choreOccursOnDay = (chore, targetDayIndex) => {
+    const choreDay = chore.day;
+    
+    if (!chore.recurrence || chore.recurrence === 'none') {
+      return choreDay === targetDayIndex;
+    }
+    if (chore.recurrence === 'daily') {
+      return true;
+    }
+    if (chore.recurrence === 'weekly') {
+      return choreDay === targetDayIndex;
+    }
+    if (chore.recurrence === 'weekdays') {
+      return targetDayIndex >= 0 && targetDayIndex <= 4; // Mon-Fri
+    }
+    if (chore.recurrence === 'weekends') {
+      return targetDayIndex === 5 || targetDayIndex === 6; // Sat-Sun
+    }
+    return choreDay === targetDayIndex;
+  };
+
   const getEventsForDate = (dateStr) => {
     const events = (weekData.calendarEvents || []).filter(e => eventOccursOnDate(e, dateStr));
     return events.sort((a, b) => {
-      // All-day events come first
       if (a.allDay && !b.allDay) return -1;
       if (!a.allDay && b.allDay) return 1;
-      // Then sort by time
       return (a.time || '').localeCompare(b.time || '');
     });
   };
@@ -242,7 +255,6 @@ export default function FamilyHQ() {
     saveToFirebase(newData); 
   };
   
-  const updateLunch = (day, person, value) => { const newData = { ...weekData, lunches: weekData.lunches.map((l, i) => i === day ? { ...l, [person.toLowerCase()]: value } : l) }; setWeekData(newData); saveToFirebase(newData); };
   const toggleChore = (id) => { const newData = { ...weekData, chores: weekData.chores.map(c => c.id === id ? { ...c, done: !c.done } : c) }; setWeekData(newData); saveToFirebase(newData); };
   const toggleGrocery = (id) => { const newData = { ...weekData, grocery: weekData.grocery.map(g => g.id === id ? { ...g, done: !g.done } : g) }; setWeekData(newData); saveToFirebase(newData); };
   const deleteEvent = (id) => { const newData = { ...weekData, calendarEvents: weekData.calendarEvents.filter(e => e.id !== id) }; setWeekData(newData); saveToFirebase(newData); };
@@ -252,15 +264,21 @@ export default function FamilyHQ() {
   const openModal = (type, presetDate = null) => { 
     setModalType(type);
     setEditingEvent(null);
+    setEditingChore(null);
     const dateStr = presetDate || formatDateLocal(getDateForDay(selectedDay));
-    setNewItem({ title: '', time: '09:00', person: 'Chris', personOther: '', kid: 'Camilla', day: selectedDay, meal: '', prep: 'Chris', task: '', item: '', date: dateStr, category: 'kids', recurrence: 'none', allDay: false }); 
+    setNewItem({ 
+      title: '', time: '09:00', person: 'Chris', personOther: '', kid: 'Camilla', 
+      day: selectedDay, meal: '', prep: 'Chris', task: '', item: '', 
+      date: dateStr, category: 'kids', recurrence: 'none', allDay: false,
+      choreRecurrence: 'none'
+    }); 
     setShowAddModal(true); 
   };
 
-  // Open modal to edit an existing event
   const openEditModal = (event) => {
     setModalType('event');
     setEditingEvent(event);
+    setEditingChore(null);
     const isOtherPerson = !people.includes(event.person);
     setNewItem({
       title: event.title,
@@ -276,7 +294,33 @@ export default function FamilyHQ() {
       date: event.date,
       category: event.category,
       recurrence: event.recurrence,
-      allDay: event.allDay || false
+      allDay: event.allDay || false,
+      choreRecurrence: 'none'
+    });
+    setShowAddModal(true);
+  };
+
+  const openEditChoreModal = (chore) => {
+    setModalType('chore');
+    setEditingChore(chore);
+    setEditingEvent(null);
+    const isOtherPerson = !people.includes(chore.person);
+    setNewItem({
+      title: '',
+      time: '09:00',
+      person: isOtherPerson ? 'Other' : chore.person,
+      personOther: isOtherPerson ? chore.person : '',
+      kid: 'Camilla',
+      day: chore.day,
+      meal: '',
+      prep: 'Chris',
+      task: chore.task,
+      item: '',
+      date: formatDateLocal(new Date()),
+      category: 'kids',
+      recurrence: 'none',
+      allDay: false,
+      choreRecurrence: chore.recurrence || 'none'
     });
     setShowAddModal(true);
   };
@@ -287,14 +331,12 @@ export default function FamilyHQ() {
     
     if (modalType === 'event' && newItem.title) {
       if (editingEvent) {
-        // Update existing event
         newData.calendarEvents = weekData.calendarEvents.map(e => 
           e.id === editingEvent.id 
             ? { ...e, date: newItem.date, time: newItem.allDay ? null : newItem.time, title: newItem.title, person: finalPerson, kid: newItem.kid, category: newItem.category, recurrence: newItem.recurrence, allDay: newItem.allDay }
             : e
         );
       } else {
-        // Add new event
         const id = Date.now();
         newData.calendarEvents = [...(weekData.calendarEvents || []), { id, date: newItem.date, time: newItem.allDay ? null : newItem.time, title: newItem.title, person: finalPerson, kid: newItem.kid, category: newItem.category, recurrence: newItem.recurrence, allDay: newItem.allDay }];
       }
@@ -302,8 +344,16 @@ export default function FamilyHQ() {
       const id = Date.now();
       newData.meals = [...(weekData.meals || []).filter(m => m.day !== newItem.day), { id, day: newItem.day, meal: newItem.meal, prep: newItem.prep }];
     } else if (modalType === 'chore' && newItem.task) {
-      const id = Date.now();
-      newData.chores = [...(weekData.chores || []), { id, day: newItem.day, task: newItem.task, person: finalPerson, done: false }];
+      if (editingChore) {
+        newData.chores = weekData.chores.map(c => 
+          c.id === editingChore.id 
+            ? { ...c, task: newItem.task, person: finalPerson, day: newItem.day, recurrence: newItem.choreRecurrence }
+            : c
+        );
+      } else {
+        const id = Date.now();
+        newData.chores = [...(weekData.chores || []), { id, day: newItem.day, task: newItem.task, person: finalPerson, done: false, recurrence: newItem.choreRecurrence }];
+      }
     } else if (modalType === 'grocery' && newItem.item) {
       const id = Date.now();
       newData.grocery = [...(weekData.grocery || []), { id, item: newItem.item, done: false }];
@@ -311,15 +361,33 @@ export default function FamilyHQ() {
     
     setWeekData(newData); 
     saveToFirebase(newData);
-    setNewItem({ title: '', time: '09:00', person: 'Chris', personOther: '', kid: 'Camilla', day: selectedDay, meal: '', prep: 'Chris', task: '', item: '', date: formatDateLocal(new Date()), category: 'kids', recurrence: 'none', allDay: false });
+    setNewItem({ 
+      title: '', time: '09:00', person: 'Chris', personOther: '', kid: 'Camilla', 
+      day: selectedDay, meal: '', prep: 'Chris', task: '', item: '', 
+      date: formatDateLocal(new Date()), category: 'kids', recurrence: 'none', allDay: false,
+      choreRecurrence: 'none'
+    });
     setShowAddModal(false); 
     setSelectedCalendarDate(null);
     setEditingEvent(null);
+    setEditingChore(null);
   };
 
   const getMealForDay = (day) => (weekData.meals || []).find(m => m.day === day);
-  const getChoresForDay = (day) => (weekData.chores || []).filter(c => c.day === day);
-  const getLunchForDay = (day) => weekData.lunches?.[day] || {};
+  const getChoresForDay = (day) => (weekData.chores || []).filter(c => choreOccursOnDay(c, day));
+
+  const choreRecurrenceOptions = [
+    { id: 'none', label: 'Does not repeat' },
+    { id: 'daily', label: 'Daily' },
+    { id: 'weekly', label: 'Weekly' },
+    { id: 'weekdays', label: 'Weekdays (Mon-Fri)' },
+    { id: 'weekends', label: 'Weekends (Sat-Sun)' },
+  ];
+
+  const getChoreRecurrenceLabel = (recurrence) => {
+    const option = choreRecurrenceOptions.find(o => o.id === recurrence);
+    return option ? option.label : '';
+  };
 
   const PersonBadge = ({ person }) => <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${person === 'Chris' ? 'bg-blue-100 text-blue-700' : person === 'Alex' ? 'bg-rose-100 text-rose-700' : person === 'Both' ? 'bg-purple-100 text-purple-700' : 'bg-stone-200 text-stone-700'}`}>{person}</span>;
   const KidBadge = ({ kid }) => <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${kid === 'Camilla' ? 'bg-pink-100 text-pink-700' : kid === 'Asher' ? 'bg-emerald-100 text-emerald-700' : kid === 'Both' ? 'bg-amber-100 text-amber-700' : 'bg-stone-100 text-stone-600'}`}>{kid}</span>;
@@ -365,7 +433,6 @@ export default function FamilyHQ() {
     );
   };
 
-  // Clickable Event Card that opens edit modal
   const EventCard = ({ event, showDate, onClick }) => {
     const cat = getCategoryInfo(event.category);
     const isAllDay = event.allDay;
@@ -400,54 +467,30 @@ export default function FamilyHQ() {
     );
   };
 
-  // Caregiver selector component
-  const CaregiverSelector = ({ value, otherValue, onChange, onOtherChange }) => {
-    const isOther = value === 'Other';
-    
-    if (isOther) {
-      return (
-        <div className="space-y-1">
-          <input 
-            type="text" 
-            placeholder="e.g., Grandma, Babysitter..." 
-            value={otherValue} 
-            onChange={(e) => onOtherChange(e.target.value)} 
-            className="w-full px-2 py-1.5 rounded-lg border border-stone-200 text-sm" 
-          />
-          <button 
-            onClick={() => onChange('Chris')} 
-            className="text-xs text-amber-600"
-          >
-            ← Back to list
-          </button>
-        </div>
-      );
-    }
-    
-    return (
-      <select 
-        value={value} 
-        onChange={(e) => onChange(e.target.value)} 
-        className="w-full px-2 py-1.5 rounded-lg border-0 bg-white text-sm font-medium"
-      >
-        {caregiverOptions.map(c => (
-          <option key={c} value={c}>{c === 'Other' ? 'Other...' : c}</option>
-        ))}
-      </select>
-    );
-  };
-
   const KidSection = ({ name, data }) => {
     const kidKey = name.toLowerCase(); 
     const dayData = data?.[selectedDay] || { location: 'No Daycare', dropoff: '', pickup: '', caregiver: 'Chris', caregiverOther: '' }; 
     const isNoDaycare = dayData.location === 'No Daycare';
     
-    // Get display name for caregiver
+    const [localCaregiverOther, setLocalCaregiverOther] = useState(dayData.caregiverOther || '');
+    
+    useEffect(() => {
+      setLocalCaregiverOther(dayData.caregiverOther || '');
+    }, [dayData.caregiverOther, selectedDay]);
+    
     const getCaregiverDisplay = () => {
       if (dayData.caregiver === 'Other' && dayData.caregiverOther) {
         return dayData.caregiverOther;
       }
       return dayData.caregiver || 'Chris';
+    };
+
+    const handleCaregiverOtherChange = (value) => {
+      setLocalCaregiverOther(value);
+    };
+
+    const handleCaregiverOtherBlur = () => {
+      updateKidDay(kidKey, selectedDay, 'caregiverOther', localCaregiverOther);
     };
     
     return (
@@ -479,12 +522,37 @@ export default function FamilyHQ() {
             <div className="bg-white/70 rounded-xl p-2">
               <label className="text-xs text-stone-500">Who's looking after {name}?</label>
               <div className="mt-1">
-                <CaregiverSelector 
-                  value={dayData.caregiver || 'Chris'} 
-                  otherValue={dayData.caregiverOther || ''} 
-                  onChange={(val) => updateKidDay(kidKey, selectedDay, 'caregiver', val)}
-                  onOtherChange={(val) => updateKidDay(kidKey, selectedDay, 'caregiverOther', val)}
-                />
+                {dayData.caregiver === 'Other' ? (
+                  <div className="space-y-1">
+                    <input 
+                      type="text" 
+                      placeholder="e.g., Grandma, Babysitter..." 
+                      value={localCaregiverOther} 
+                      onChange={(e) => handleCaregiverOtherChange(e.target.value)}
+                      onBlur={handleCaregiverOtherBlur}
+                      className="w-full px-2 py-1.5 rounded-lg border border-stone-200 text-sm" 
+                    />
+                    <button 
+                      onClick={() => {
+                        updateKidDay(kidKey, selectedDay, 'caregiver', 'Chris');
+                        updateKidDay(kidKey, selectedDay, 'caregiverOther', '');
+                      }} 
+                      className="text-xs text-amber-600"
+                    >
+                      ← Back to list
+                    </button>
+                  </div>
+                ) : (
+                  <select 
+                    value={dayData.caregiver || 'Chris'} 
+                    onChange={(e) => updateKidDay(kidKey, selectedDay, 'caregiver', e.target.value)}
+                    className="w-full px-2 py-1.5 rounded-lg border-0 bg-white text-sm font-medium"
+                  >
+                    {caregiverOptions.map(c => (
+                      <option key={c} value={c}>{c === 'Other' ? 'Other...' : c}</option>
+                    ))}
+                  </select>
+                )}
               </div>
             </div>
           ) : (
@@ -581,9 +649,6 @@ export default function FamilyHQ() {
   };
 
   const DashboardView = () => {
-    const tomorrowIndex = (selectedDay + 1) % 7; 
-    const lunch = getLunchForDay(tomorrowIndex);
-    
     return (
       <div className="space-y-4 pb-20">
         {/* Week Navigation */}
@@ -676,14 +741,35 @@ export default function FamilyHQ() {
           {getMealForDay(selectedDay) ? <div className="bg-white/70 rounded-xl p-3"><p className="font-semibold text-stone-800">{getMealForDay(selectedDay).meal}</p><p className="text-xs text-stone-500 mt-1">Chef: <PersonBadge person={getMealForDay(selectedDay).prep} /></p></div> : <p className="text-stone-400 text-sm py-3 text-center bg-white/50 rounded-xl">No dinner planned</p>}
         </div>
         
-        <div className="bg-gradient-to-br from-sky-50 to-blue-50 rounded-2xl p-4 border border-sky-100">
-          <h3 className="font-bold text-stone-800 mb-3">🥪 Tomorrow's Lunches <span className="text-xs font-normal text-stone-500">({days[tomorrowIndex]})</span></h3>
-          <div className="space-y-2">{familyMembers.map(m => <div key={m} className="bg-white/70 rounded-xl p-2"><label className="text-xs text-stone-500">{m === 'Camilla' ? '👧' : m === 'Asher' ? '👦' : m === 'Chris' ? '👨' : '👩'} {m}</label><input type="text" value={lunch[m.toLowerCase()] || ''} onChange={(e) => updateLunch(tomorrowIndex, m, e.target.value)} placeholder={`What's ${m} having?`} className="w-full mt-1 px-2 py-1.5 rounded-lg border border-stone-200 text-sm" /></div>)}</div>
-        </div>
-        
         <div className="bg-white rounded-2xl p-4 border border-stone-100">
-          <div className="flex items-center justify-between mb-3"><h3 className="font-bold text-stone-800">✨ Today's Chores</h3><button onClick={() => openModal('chore')} className="w-7 h-7 rounded-full bg-stone-100 text-stone-600 font-bold">+</button></div>
-          {getChoresForDay(selectedDay).length === 0 ? <p className="text-stone-400 text-sm py-3 text-center">No chores! 🎉</p> : <div className="space-y-2">{getChoresForDay(selectedDay).map(c => <div key={c.id} className={`flex items-center gap-2 p-2 rounded-xl group ${c.done ? 'bg-emerald-50' : 'bg-stone-50'}`}><button onClick={() => toggleChore(c.id)} className={`w-5 h-5 rounded-full border-2 text-xs ${c.done ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-stone-300'}`}>{c.done && '✓'}</button><span className={`flex-1 text-sm ${c.done ? 'line-through text-stone-400' : ''}`}>{c.task}</span><PersonBadge person={c.person} /><button onClick={() => deleteChore(c.id)} className="opacity-0 group-hover:opacity-100 w-5 h-5 rounded-full bg-red-100 text-red-500 text-xs">✕</button></div>)}</div>}
+          <div className="flex items-center justify-between mb-3"><h3 className="font-bold text-stone-800">✨ Chores</h3><button onClick={() => openModal('chore')} className="w-7 h-7 rounded-full bg-stone-100 text-stone-600 font-bold">+</button></div>
+          {getChoresForDay(selectedDay).length === 0 ? <p className="text-stone-400 text-sm py-3 text-center">No chores! 🎉</p> : <div className="space-y-2">{getChoresForDay(selectedDay).map(c => (
+            <div 
+              key={c.id} 
+              className={`flex items-center gap-2 p-2 rounded-xl group cursor-pointer ${c.done ? 'bg-emerald-50' : 'bg-stone-50'}`}
+              onClick={() => openEditChoreModal(c)}
+            >
+              <button 
+                onClick={(e) => { e.stopPropagation(); toggleChore(c.id); }} 
+                className={`w-5 h-5 rounded-full border-2 text-xs flex-shrink-0 ${c.done ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-stone-300'}`}
+              >
+                {c.done && '✓'}
+              </button>
+              <div className="flex-1 min-w-0">
+                <span className={`text-sm ${c.done ? 'line-through text-stone-400' : ''}`}>{c.task}</span>
+                {c.recurrence && c.recurrence !== 'none' && (
+                  <span className="text-xs text-stone-400 ml-1">🔄</span>
+                )}
+              </div>
+              <PersonBadge person={c.person} />
+              <button 
+                onClick={(e) => { e.stopPropagation(); deleteChore(c.id); }} 
+                className="opacity-0 group-hover:opacity-100 w-5 h-5 rounded-full bg-red-100 text-red-500 text-xs flex-shrink-0"
+              >
+                ✕
+              </button>
+            </div>
+          ))}</div>}
         </div>
       </div>
     );
@@ -708,7 +794,7 @@ export default function FamilyHQ() {
       <label className="text-xs text-stone-500">Who</label>
       {newItem.person === 'Other' ? (
         <div className="space-y-1">
-          <input type="text" placeholder="Enter name..." value={newItem.personOther} onChange={e => setNewItem(p => ({ ...p, personOther: e.target.value }))} className="w-full px-3 py-2 rounded-xl border border-stone-200 text-sm" autoFocus />
+          <input type="text" placeholder="Enter name..." value={newItem.personOther} onChange={e => setNewItem(p => ({ ...p, personOther: e.target.value }))} className="w-full px-3 py-2 rounded-xl border border-stone-200 text-sm" />
           <button onClick={() => setNewItem(p => ({ ...p, person: 'Chris', personOther: '' }))} className="text-xs text-amber-600">← Back</button>
         </div>
       ) : (
@@ -726,12 +812,12 @@ export default function FamilyHQ() {
       <main className="max-w-md mx-auto px-4 py-4">{currentView === 'dashboard' && <DashboardView />}{currentView === 'calendar' && <CalendarView />}{currentView === 'meals' && <MealsView />}{currentView === 'grocery' && <GroceryView />}</main>
       <nav className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-xl border-t border-stone-100 px-4 py-2 pb-4"><div className="flex justify-around max-w-md mx-auto"><NavButton view="dashboard" icon="📋" label="Today" /><NavButton view="calendar" icon="📅" label="Calendar" /><NavButton view="meals" icon="🍽️" label="Meals" /><NavButton view="grocery" icon="🛒" label="Grocery" /></div></nav>
       
-      {showAddModal && <div className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center" onClick={() => { setShowAddModal(false); setSelectedCalendarDate(null); setEditingEvent(null); }}><div className="bg-white w-full max-w-md rounded-t-2xl p-5 max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+      {showAddModal && <div className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center" onClick={() => { setShowAddModal(false); setSelectedCalendarDate(null); setEditingEvent(null); setEditingChore(null); }}><div className="bg-white w-full max-w-md rounded-t-2xl p-5 max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-bold text-stone-800">
-            {modalType === 'event' ? (editingEvent ? '✏️ Edit Event' : '📅 Add Event') : modalType === 'meal' ? '🍽️ Add Meal' : modalType === 'chore' ? '✨ Add Chore' : '🛒 Add Item'}
+            {modalType === 'event' ? (editingEvent ? '✏️ Edit Event' : '📅 Add Event') : modalType === 'meal' ? '🍽️ Add Meal' : modalType === 'chore' ? (editingChore ? '✏️ Edit Chore' : '✨ Add Chore') : '🛒 Add Item'}
           </h3>
-          <button onClick={() => { setShowAddModal(false); setEditingEvent(null); }} className="w-7 h-7 rounded-full bg-stone-100 text-stone-500">✕</button>
+          <button onClick={() => { setShowAddModal(false); setEditingEvent(null); setEditingChore(null); }} className="w-7 h-7 rounded-full bg-stone-100 text-stone-500">✕</button>
         </div>
         <div className="space-y-3">
           {modalType === 'event' && <>
@@ -782,10 +868,24 @@ export default function FamilyHQ() {
               <WhoSelector />
               <div><label className="text-xs text-stone-500">Day</label><select value={newItem.day} onChange={e => setNewItem(p => ({ ...p, day: parseInt(e.target.value) }))} className="w-full px-3 py-2 rounded-xl border border-stone-200 text-sm">{days.map((d, i) => <option key={d} value={i}>{d}</option>)}</select></div>
             </div>
+            <div>
+              <label className="text-xs text-stone-500">Repeats</label>
+              <select value={newItem.choreRecurrence} onChange={e => setNewItem(p => ({ ...p, choreRecurrence: e.target.value }))} className="w-full px-3 py-2 rounded-xl border border-stone-200 text-sm mt-1">
+                {choreRecurrenceOptions.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+              </select>
+            </div>
+            {editingChore && (
+              <button 
+                onClick={() => { deleteChore(editingChore.id); setShowAddModal(false); setEditingChore(null); }} 
+                className="w-full py-2 rounded-xl border border-red-200 text-red-500 text-sm font-medium hover:bg-red-50"
+              >
+                🗑️ Delete Chore
+              </button>
+            )}
           </>}
           {modalType === 'grocery' && <input type="text" placeholder="Add item..." value={newItem.item} onChange={e => setNewItem(p => ({ ...p, item: e.target.value }))} onKeyDown={e => e.key === 'Enter' && addItem()} className="w-full px-3 py-2 rounded-xl border border-stone-200 text-sm" />}
           <button onClick={addItem} className={`w-full py-3 rounded-xl text-white font-semibold text-sm ${modalType === 'event' ? 'bg-amber-500' : modalType === 'meal' ? 'bg-orange-500' : modalType === 'chore' ? 'bg-stone-600' : 'bg-blue-500'}`}>
-            {editingEvent ? 'Save Changes' : 'Add'}
+            {editingEvent || editingChore ? 'Save Changes' : 'Add'}
           </button>
         </div>
       </div></div>}
